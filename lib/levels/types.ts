@@ -1,3 +1,5 @@
+import type { BlockPlan } from '../maze/world';
+
 export type UtilityType = 'phase' | 'destroy' | 'scramble' | 'dash' | 'shield' | 'trap';
 export type MonsterType = 'hunter' | 'wraith' | 'brute' | 'stalker' | 'watcher';
 
@@ -8,15 +10,16 @@ export interface ScrambleConfig {
   maxIntervalSec: number;
   /** Chance (0-1) that a scramble "tell" plays but nothing actually changes — keeps players honest. */
   falseAlarmChance: number;
-  /** How many wall toggles are attempted per scramble (see scrambleMaze intensity). */
-  intensity: number;
+  /** Fraction of the *current block's* active cells attempted as wall toggles per scramble (0-1). */
+  intensityRatio: number;
 }
 
 export interface LevelConfig {
   id: number;
   chapter: 1 | 2 | 3 | 4;
   title: string;
-  grid: { width: number; height: number };
+  /** The level's maze is a chain of connected blocks (see lib/maze/world) — built via buildBlockPlans. */
+  blocks: BlockPlan[];
   scramble: ScrambleConfig;
   monsters: MonsterType[];
   utilities: UtilityType[];
@@ -29,5 +32,5 @@ export const NO_SCRAMBLE: ScrambleConfig = {
   minIntervalSec: 0,
   maxIntervalSec: 0,
   falseAlarmChance: 0,
-  intensity: 0,
+  intensityRatio: 0,
 };

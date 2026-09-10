@@ -1,3 +1,4 @@
+import { buildBlockPlans } from './blockPlans';
 import { NO_SCRAMBLE, type LevelConfig } from './types';
 
 /**
@@ -5,215 +6,147 @@ import { NO_SCRAMBLE, type LevelConfig } from './types';
  * Pack I (6-10) / Pack II (11-20) monetization tiers. See project memory
  * `mazeshift-level-plan` for the full design rationale per level.
  *
- * Grids are deliberately large and dense even early on — the maze itself is
- * the challenge in chapter 1, before monsters or utilities exist, so it has
- * to take real time and real exploration to solve.
+ * Each level's maze is a chain of connected blocks (lib/maze/world), not one
+ * flat rectangle — `numBlocks` grows across the roadmap, and `refW`/`refH`
+ * are the reference size each block is scaled from (see buildBlockPlans).
  */
+function level(
+  id: number,
+  chapter: 1 | 2 | 3 | 4,
+  title: string,
+  numBlocks: number,
+  refW: number,
+  refH: number,
+  rest: Omit<LevelConfig, 'id' | 'chapter' | 'title' | 'blocks'>
+): LevelConfig {
+  return { id, chapter, title, blocks: buildBlockPlans(numBlocks, refW, refH, id, chapter), ...rest };
+}
+
 export const LEVELS: LevelConfig[] = [
-  {
-    id: 1,
-    chapter: 1,
-    title: 'First Steps',
-    grid: { width: 14, height: 18 },
+  level(1, 1, 'First Steps', 2, 14, 18, {
     scramble: NO_SCRAMBLE,
     monsters: [],
     utilities: [],
     inventoryCap: 0,
-  },
-  {
-    id: 2,
-    chapter: 1,
-    title: 'Longer Path',
-    grid: { width: 16, height: 20 },
+  }),
+  level(2, 1, 'Longer Path', 2, 16, 20, {
     scramble: NO_SCRAMBLE,
     monsters: [],
     utilities: [],
     inventoryCap: 0,
-  },
-  {
-    id: 3,
-    chapter: 1,
-    title: "It's Changing",
-    grid: { width: 15, height: 19 },
-    scramble: { enabled: true, minIntervalSec: 20, maxIntervalSec: 23, falseAlarmChance: 0, intensity: 24 },
+  }),
+  level(3, 1, "It's Changing", 3, 15, 19, {
+    scramble: { enabled: true, minIntervalSec: 20, maxIntervalSec: 23, falseAlarmChance: 0, intensityRatio: 0.08 },
     monsters: [],
     utilities: [],
     inventoryCap: 0,
-  },
-  {
-    id: 4,
-    chapter: 1,
-    title: 'Faster',
-    grid: { width: 14, height: 18 },
-    scramble: { enabled: true, minIntervalSec: 15, maxIntervalSec: 17, falseAlarmChance: 0.1, intensity: 24 },
+  }),
+  level(4, 1, 'Faster', 3, 14, 18, {
+    scramble: { enabled: true, minIntervalSec: 15, maxIntervalSec: 17, falseAlarmChance: 0.1, intensityRatio: 0.08 },
     monsters: [],
     utilities: [],
     inventoryCap: 0,
-  },
-  {
-    id: 5,
-    chapter: 1,
-    title: 'The First Mark',
-    grid: { width: 16, height: 20 },
-    scramble: { enabled: true, minIntervalSec: 15, maxIntervalSec: 18, falseAlarmChance: 0.15, intensity: 30 },
+  }),
+  level(5, 1, 'The First Mark', 3, 16, 20, {
+    scramble: { enabled: true, minIntervalSec: 15, maxIntervalSec: 18, falseAlarmChance: 0.15, intensityRatio: 0.09 },
     monsters: [],
     utilities: ['phase'],
     inventoryCap: 2,
-  },
-  {
-    id: 6,
-    chapter: 2,
-    title: 'Sealed Routes',
-    grid: { width: 16, height: 20 },
-    scramble: { enabled: true, minIntervalSec: 14, maxIntervalSec: 17, falseAlarmChance: 0.15, intensity: 30 },
+  }),
+  level(6, 2, 'Sealed Routes', 3, 16, 20, {
+    scramble: { enabled: true, minIntervalSec: 14, maxIntervalSec: 17, falseAlarmChance: 0.15, intensityRatio: 0.09 },
     monsters: [],
     utilities: ['phase'],
     inventoryCap: 2,
-  },
-  {
-    id: 7,
-    chapter: 2,
-    title: 'Second Sign',
-    grid: { width: 17, height: 21 },
-    scramble: { enabled: true, minIntervalSec: 14, maxIntervalSec: 17, falseAlarmChance: 0.15, intensity: 36 },
+  }),
+  level(7, 2, 'Second Sign', 4, 17, 21, {
+    scramble: { enabled: true, minIntervalSec: 14, maxIntervalSec: 17, falseAlarmChance: 0.15, intensityRatio: 0.1 },
     monsters: [],
     utilities: ['phase', 'destroy'],
     inventoryCap: 2,
-  },
-  {
-    id: 8,
-    chapter: 2,
-    title: 'Something Hunts',
-    grid: { width: 15, height: 19 },
+  }),
+  level(8, 2, 'Something Hunts', 3, 15, 19, {
     scramble: NO_SCRAMBLE,
     monsters: ['hunter'],
     utilities: ['phase', 'destroy'],
     inventoryCap: 2,
-  },
-  {
-    id: 9,
-    chapter: 2,
-    title: 'Hunted & Shifting',
-    grid: { width: 16, height: 20 },
-    scramble: { enabled: true, minIntervalSec: 13, maxIntervalSec: 16, falseAlarmChance: 0.15, intensity: 36 },
+  }),
+  level(9, 2, 'Hunted & Shifting', 4, 16, 20, {
+    scramble: { enabled: true, minIntervalSec: 13, maxIntervalSec: 16, falseAlarmChance: 0.15, intensityRatio: 0.1 },
     monsters: ['hunter'],
     utilities: ['phase', 'destroy'],
     inventoryCap: 2,
-  },
-  {
-    id: 10,
-    chapter: 2,
-    title: 'BOOM',
-    grid: { width: 17, height: 21 },
-    scramble: { enabled: true, minIntervalSec: 13, maxIntervalSec: 16, falseAlarmChance: 0.2, intensity: 39 },
+  }),
+  level(10, 2, 'BOOM', 4, 17, 21, {
+    scramble: { enabled: true, minIntervalSec: 13, maxIntervalSec: 16, falseAlarmChance: 0.2, intensityRatio: 0.1 },
     monsters: ['hunter', 'brute'],
     utilities: ['phase', 'destroy'],
     inventoryCap: 2,
-  },
-  {
-    id: 11,
-    chapter: 3,
-    title: 'Walls Lie',
-    grid: { width: 18, height: 22 },
-    scramble: { enabled: true, minIntervalSec: 12, maxIntervalSec: 15, falseAlarmChance: 0.2, intensity: 42 },
+  }),
+  level(11, 3, 'Walls Lie', 4, 18, 22, {
+    scramble: { enabled: true, minIntervalSec: 12, maxIntervalSec: 15, falseAlarmChance: 0.2, intensityRatio: 0.1 },
     monsters: ['hunter', 'wraith'],
     utilities: ['phase', 'destroy'],
     inventoryCap: 2,
-  },
-  {
-    id: 12,
-    chapter: 3,
-    title: 'Choose Wisely',
-    grid: { width: 18, height: 22 },
-    scramble: { enabled: true, minIntervalSec: 12, maxIntervalSec: 15, falseAlarmChance: 0.2, intensity: 42 },
+  }),
+  level(12, 3, 'Choose Wisely', 5, 18, 22, {
+    scramble: { enabled: true, minIntervalSec: 12, maxIntervalSec: 15, falseAlarmChance: 0.2, intensityRatio: 0.1 },
     monsters: ['hunter', 'wraith'],
     utilities: ['phase', 'destroy', 'scramble'],
     inventoryCap: 2,
-  },
-  {
-    id: 13,
-    chapter: 3,
-    title: 'Scarcity',
-    grid: { width: 18, height: 22 },
-    scramble: { enabled: true, minIntervalSec: 11, maxIntervalSec: 14, falseAlarmChance: 0.2, intensity: 42 },
+  }),
+  level(13, 3, 'Scarcity', 5, 18, 22, {
+    scramble: { enabled: true, minIntervalSec: 11, maxIntervalSec: 14, falseAlarmChance: 0.2, intensityRatio: 0.1 },
     monsters: ['hunter', 'wraith'],
     utilities: ['phase', 'destroy', 'scramble'],
     inventoryCap: 1,
-  },
-  {
-    id: 14,
-    chapter: 3,
-    title: 'Everything',
-    grid: { width: 19, height: 23 },
-    scramble: { enabled: true, minIntervalSec: 11, maxIntervalSec: 14, falseAlarmChance: 0.2, intensity: 45 },
+  }),
+  level(14, 3, 'Everything', 5, 19, 23, {
+    scramble: { enabled: true, minIntervalSec: 11, maxIntervalSec: 14, falseAlarmChance: 0.2, intensityRatio: 0.1 },
     monsters: ['hunter', 'wraith', 'brute', 'stalker'],
     utilities: ['phase', 'destroy', 'scramble', 'dash'],
     inventoryCap: 2,
-  },
-  {
-    id: 15,
-    chapter: 3,
-    title: 'The Maze Knows You',
-    grid: { width: 21, height: 25 },
-    scramble: { enabled: true, minIntervalSec: 10, maxIntervalSec: 13, falseAlarmChance: 0.25, intensity: 54 },
+  }),
+  level(15, 3, 'The Maze Knows You', 6, 21, 25, {
+    scramble: { enabled: true, minIntervalSec: 10, maxIntervalSec: 13, falseAlarmChance: 0.25, intensityRatio: 0.11 },
     monsters: ['hunter', 'wraith', 'brute', 'stalker'],
     utilities: ['phase', 'destroy', 'scramble', 'dash'],
     inventoryCap: 2,
     isBoss: true,
-  },
-  {
-    id: 16,
-    chapter: 4,
-    title: 'Being Watched',
-    grid: { width: 15, height: 19 },
+  }),
+  level(16, 4, 'Being Watched', 4, 15, 19, {
     scramble: NO_SCRAMBLE,
     monsters: ['watcher'],
     utilities: ['phase', 'destroy', 'scramble', 'dash'],
     inventoryCap: 2,
-  },
-  {
-    id: 17,
-    chapter: 4,
-    title: 'Predicted',
-    grid: { width: 17, height: 21 },
+  }),
+  level(17, 4, 'Predicted', 4, 17, 21, {
     scramble: NO_SCRAMBLE,
     monsters: ['stalker', 'watcher'],
     utilities: ['phase', 'destroy', 'scramble', 'dash', 'shield'],
     inventoryCap: 2,
-  },
-  {
-    id: 18,
-    chapter: 4,
-    title: 'The Gallery',
-    grid: { width: 20, height: 24 },
-    scramble: { enabled: true, minIntervalSec: 10, maxIntervalSec: 13, falseAlarmChance: 0.2, intensity: 54 },
+  }),
+  level(18, 4, 'The Gallery', 6, 20, 24, {
+    scramble: { enabled: true, minIntervalSec: 10, maxIntervalSec: 13, falseAlarmChance: 0.2, intensityRatio: 0.11 },
     monsters: ['hunter', 'wraith', 'brute', 'stalker', 'watcher'],
     utilities: ['phase', 'destroy', 'scramble', 'dash', 'shield', 'trap'],
     inventoryCap: 2,
-  },
-  {
-    id: 19,
-    chapter: 4,
-    title: 'Nothing Left to Spare',
-    grid: { width: 20, height: 25 },
-    scramble: { enabled: true, minIntervalSec: 9, maxIntervalSec: 12, falseAlarmChance: 0.25, intensity: 57 },
+  }),
+  level(19, 4, 'Nothing Left to Spare', 6, 20, 25, {
+    scramble: { enabled: true, minIntervalSec: 9, maxIntervalSec: 12, falseAlarmChance: 0.25, intensityRatio: 0.12 },
     monsters: ['wraith', 'stalker', 'watcher'],
     utilities: ['phase', 'destroy', 'scramble', 'dash', 'shield', 'trap'],
     inventoryCap: 1,
-  },
-  {
-    id: 20,
-    chapter: 4,
-    title: 'The Maze Fights Back',
-    grid: { width: 23, height: 28 },
-    scramble: { enabled: true, minIntervalSec: 8, maxIntervalSec: 11, falseAlarmChance: 0.25, intensity: 66 },
+  }),
+  level(20, 4, 'The Maze Fights Back', 7, 23, 28, {
+    scramble: { enabled: true, minIntervalSec: 8, maxIntervalSec: 11, falseAlarmChance: 0.25, intensityRatio: 0.12 },
     monsters: ['hunter', 'wraith', 'brute', 'stalker', 'watcher'],
     utilities: ['phase', 'destroy', 'scramble', 'dash', 'shield', 'trap'],
     inventoryCap: 1,
     isBoss: true,
-  },
+  }),
 ];
 
 export function getLevel(id: number): LevelConfig | undefined {
-  return LEVELS.find((level) => level.id === id);
+  return LEVELS.find((l) => l.id === id);
 }

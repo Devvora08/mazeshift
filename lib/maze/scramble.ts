@@ -1,4 +1,4 @@
-import { edgeKey, isReachable } from './graph';
+import { edgeKey, isReachable, posKey } from './graph';
 import { shuffle, type Rng } from './rng';
 import type { Maze, Position } from './types';
 
@@ -8,15 +8,20 @@ export interface ScrambleResult {
   changedEdges: number;
 }
 
-function allAdjacentPairs(width: number, height: number): [Position, Position][] {
+function allAdjacentPairs(
+  width: number,
+  height: number,
+  activeCells: ReadonlySet<string>
+): [Position, Position][] {
   const pairs: [Position, Position][] = [];
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
+      if (!activeCells.has(posKey({ x, y }))) continue;
       const cell = { x, y };
       const right = { x: x + 1, y };
       const down = { x, y: y + 1 };
-      if (right.x < width) pairs.push([cell, right]);
-      if (down.y < height) pairs.push([cell, down]);
+      if (right.x < width && activeCells.has(posKey(right))) pairs.push([cell, right]);
+      if (down.y < height && activeCells.has(posKey(down))) pairs.push([cell, down]);
     }
   }
   return pairs;
@@ -30,7 +35,7 @@ function allAdjacentPairs(width: number, height: number): [Position, Position][]
  */
 export function scrambleMaze(maze: Maze, rng: Rng, intensity: number): ScrambleResult {
   const openEdges = new Set(maze.openEdges);
-  const candidates = shuffle(rng, allAdjacentPairs(maze.width, maze.height));
+  const candidates = shuffle(rng, allAdjacentPairs(maze.width, maze.height, maze.activeCells));
 
   let changedEdges = 0;
   for (const [a, b] of candidates) {
@@ -42,7 +47,7 @@ export function scrambleMaze(maze: Maze, rng: Rng, intensity: number): ScrambleR
     if (isOpen) {
       // Closing a wall: only allowed if the exit is still reachable afterward.
       openEdges.delete(key);
-      if (!isReachable(openEdges, maze.width, maze.height, maze.start, maze.end)) {
+      if (!isReachable(openEdges, maze.width, maze.height, maze.start, maze.end, maze.activeCells)) {
         openEdges.add(key); // revert
         continue;
       }
@@ -59,7 +64,7 @@ export function scrambleMaze(maze: Maze, rng: Rng, intensity: number): ScrambleR
 
 /** Dev-time safety net: every scrambled maze must still connect start to end and every cell to the start. */
 export function assertMazeIsFair(maze: Maze): void {
-  if (!isReachable(maze.openEdges, maze.width, maze.height, maze.start, maze.end)) {
+  if (!isReachable(maze.openEdges, maze.width, maze.height, maze.start, maze.end, maze.activeCells)) {
     throw new Error('Scrambled maze disconnected start from end — this must never happen.');
   }
 }
