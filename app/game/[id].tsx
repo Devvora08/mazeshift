@@ -1,13 +1,14 @@
 import { useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
+import { Joystick } from '../../components/Joystick';
 import { WorldCanvas } from '../../components/WorldCanvas';
 import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
 
-const SWIPE_THRESHOLD = 24;
+/** How often we retry a held joystick direction — matches WorldCanvas's MOVE_DURATION + settle buffer. */
+const MOVE_REPEAT_MS = 220;
 
 export default function GameScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,6 +30,8 @@ export default function GameScreen() {
 
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [now, setNow] = useState(Date.now());
+  const [heldDir, setHeldDir] = useState<Direction | null>(null);
+  const heldDirection = useRef<Direction | null>(null);
 
   useEffect(() => {
     loadLevel(levelId);
@@ -46,27 +49,29 @@ export default function GameScreen() {
   // The store flips isMoving back off once the slide animation (MOVE_DURATION in WorldCanvas) settles.
   useEffect(() => {
     if (!isMoving) return;
-    const timeout = setTimeout(() => finishMove(), 220);
+    const timeout = setTimeout(() => finishMove(), MOVE_REPEAT_MS);
     return () => clearTimeout(timeout);
   }, [isMoving, heroCell, finishMove]);
 
-  const handleSwipe = (dir: Direction) => move(dir);
+  // Repeats the held joystick direction every MOVE_REPEAT_MS. move() itself no-ops while already
+  // mid-step or if the held direction is currently wall-blocked, so this is safe to call freely —
+  // and it doubles as a retry in case a blocked direction opens up later (e.g. after a scramble).
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const dir = heldDirection.current;
+      if (dir) move(dir);
+    }, MOVE_REPEAT_MS);
+    return () => clearInterval(interval);
+  }, [move]);
 
-  const swipeGesture = Gesture.Pan()
-    .runOnJS(true)
-    .onEnd((e) => {
-      const { translationX, translationY } = e;
-      if (Math.max(Math.abs(translationX), Math.abs(translationY)) < SWIPE_THRESHOLD) return;
-      const dir: Direction =
-        Math.abs(translationX) > Math.abs(translationY)
-          ? translationX > 0
-            ? 'right'
-            : 'left'
-          : translationY > 0
-            ? 'down'
-            : 'up';
-      handleSwipe(dir);
-    });
+  const handleJoystickDirection = useCallback(
+    (dir: Direction | null) => {
+      heldDirection.current = dir;
+      setHeldDir(dir);
+      if (dir) move(dir);
+    },
+    [move]
+  );
 
   const isFlashing = scrambleFlashUntil !== null && now < scrambleFlashUntil;
   const secondsToScramble = nextScrambleAt !== null ? Math.max(0, (nextScrambleAt - now) / 1000) : null;
@@ -84,27 +89,29 @@ export default function GameScreen() {
             : 'maze is calm here'}
       </Text>
 
-      <GestureDetector gesture={swipeGesture}>
-        <View
-          className="mt-1 flex-1"
-          onLayout={(e) => {
-            const { width, height } = e.nativeEvent.layout;
-            setCanvasSize({ width, height });
-          }}
-        >
-          {world && currentBlockId && heroCell && canvasSize.width > 0 && canvasSize.height > 0 && (
-            <WorldCanvas
-              world={world}
-              currentBlockId={currentBlockId}
-              heroCell={heroCell}
-              facing={facing}
-              isMoving={isMoving}
-              width={canvasSize.width}
-              height={canvasSize.height}
-            />
-          )}
-        </View>
-      </GestureDetector>
+      <View
+        className="mt-1 flex-1"
+        onLayout={(e) => {
+          const { width, height } = e.nativeEvent.layout;
+          setCanvasSize({ width, height });
+        }}
+      >
+        {world && currentBlockId && heroCell && canvasSize.width > 0 && canvasSize.height > 0 && (
+          <WorldCanvas
+            world={world}
+            currentBlockId={currentBlockId}
+            heroCell={heroCell}
+            facing={heldDir ?? facing}
+            isHolding={heldDir !== null}
+            width={canvasSize.width}
+            height={canvasSize.height}
+          />
+        )}
+      </View>
+
+      <View className="h-72 items-center">
+        <Joystick onDirectionChange={handleJoystickDirection} />
+      </View>
     </View>
   );
 }

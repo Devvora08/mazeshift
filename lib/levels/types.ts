@@ -1,19 +1,11 @@
 import type { BlockPlan } from '../maze/world';
+import type { MonsterType } from '../modules/monsters';
+import type { ScrambleConfig } from '../modules/scramble';
+import type { UtilityType } from '../modules/utilities';
 
-export type UtilityType = 'phase' | 'destroy' | 'scramble' | 'dash' | 'shield' | 'trap';
-export type MonsterType = 'hunter' | 'wraith' | 'brute' | 'stalker' | 'watcher';
+export type { MonsterType, ScrambleConfig, UtilityType };
 
-export interface ScrambleConfig {
-  enabled: boolean;
-  /** Randomized interval range, in seconds, between scrambles. */
-  minIntervalSec: number;
-  maxIntervalSec: number;
-  /** Chance (0-1) that a scramble "tell" plays but nothing actually changes — keeps players honest. */
-  falseAlarmChance: number;
-  /** Fraction of the *current block's* active cells attempted as wall toggles per scramble (0-1). */
-  intensityRatio: number;
-}
-
+/** A level is its maze (blocks) plus which feature modules are active and how each is configured. */
 export interface LevelConfig {
   id: number;
   chapter: 1 | 2 | 3 | 4;
@@ -26,11 +18,3 @@ export interface LevelConfig {
   inventoryCap: number;
   isBoss?: boolean;
 }
-
-export const NO_SCRAMBLE: ScrambleConfig = {
-  enabled: false,
-  minIntervalSec: 0,
-  maxIntervalSec: 0,
-  falseAlarmChance: 0,
-  intensityRatio: 0,
-};

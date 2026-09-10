@@ -4,9 +4,9 @@ import { getLevel } from '../lib/levels/data';
 import type { LevelConfig } from '../lib/levels/types';
 import { edgeKey, posKey } from '../lib/maze/graph';
 import { createRng, type Rng } from '../lib/maze/rng';
-import { scrambleMaze } from '../lib/maze/scramble';
 import type { Position } from '../lib/maze/types';
 import { generateWorld, type MazeWorld } from '../lib/maze/world';
+import { scheduleNextScramble, tickScramble } from '../lib/modules/scramble';
 
 export type Direction = 'up' | 'down' | 'left' | 'right';
 
@@ -40,13 +40,6 @@ interface GameState {
   finishMove: () => void;
 }
 
-function scheduleNext(level: LevelConfig, rng: Rng, now: number): number {
-  const { minIntervalSec, maxIntervalSec } = level.scramble;
-  const span = maxIntervalSec - minIntervalSec;
-  const seconds = minIntervalSec + rng() * span;
-  return now + seconds * 1000;
-}
-
 export const useGameStore = create<GameState>((set, get) => ({
   level: null,
   world: null,
@@ -66,7 +59,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     const rng = createRng(id * 7919 + 13);
     const world = generateWorld(level.blocks, id * 104729);
     const startBlock = world.blocks[0];
-    const nextScrambleAt = level.scramble.enabled ? scheduleNext(level, rng, Date.now()) : null;
+    const nextScrambleAt = level.scramble.enabled
+      ? scheduleNextScramble(level.scramble, rng, Date.now())
+      : null;
 
     set({
       level,
@@ -103,7 +98,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     const gateways = world.gatewaysByBlock.get(currentBlockId) ?? [];
     const gateway = gateways.find((g) => g.direction === dir && posKey(g.fromCell) === posKey(heroCell));
     if (gateway) {
-      const nextScrambleAt = level.scramble.enabled ? scheduleNext(level, rng, Date.now()) : null;
+      const nextScrambleAt = level.scramble.enabled
+        ? scheduleNextScramble(level.scramble, rng, Date.now())
+        : null;
       set({
         currentBlockId: gateway.toBlockId,
         heroCell: gateway.toCell,
@@ -122,28 +119,26 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   checkScramble: (now) => {
     const { level, world, currentBlockId, rng, nextScrambleAt } = get();
-    if (!level || !world || !currentBlockId || !rng || !level.scramble.enabled || nextScrambleAt === null) return;
-    if (now < nextScrambleAt) return;
-
-    const isFalseAlarm = rng() < level.scramble.falseAlarmChance;
-    if (isFalseAlarm) {
-      set({ nextScrambleAt: scheduleNext(level, rng, now), scrambleFlashUntil: now + 600 });
-      return;
-    }
+    if (!level || !world || !currentBlockId || !rng) return;
 
     const blockIndex = world.blocks.findIndex((b) => b.id === currentBlockId);
     if (blockIndex === -1) return;
     const block = world.blocks[blockIndex];
-    const intensity = Math.round(block.maze.activeCells.size * level.scramble.intensityRatio);
-    const { maze: nextMaze } = scrambleMaze(block.maze, rng, intensity);
+
+    const result = tickScramble({ config: level.scramble, block, rng, now, nextScrambleAt });
+    if (result.type === 'idle' || result.type === 'notDue') return;
+
+    if (result.type === 'falseAlarm') {
+      set({ nextScrambleAt: result.nextScrambleAt, scrambleFlashUntil: result.flashUntil });
+      return;
+    }
 
     const blocks = world.blocks.slice();
-    blocks[blockIndex] = { ...block, maze: nextMaze };
-
+    blocks[blockIndex] = { ...block, maze: result.maze };
     set({
       world: { ...world, blocks },
-      nextScrambleAt: scheduleNext(level, rng, now),
-      scrambleFlashUntil: now + 600,
+      nextScrambleAt: result.nextScrambleAt,
+      scrambleFlashUntil: result.flashUntil,
     });
   },
 }));

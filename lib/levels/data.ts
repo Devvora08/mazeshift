@@ -1,5 +1,6 @@
 import { buildBlockPlans } from './blockPlans';
-import { NO_SCRAMBLE, type LevelConfig } from './types';
+import type { LevelConfig } from './types';
+import { NO_SCRAMBLE } from '../modules/scramble';
 
 /**
  * Locked v1 roadmap: 20 levels across 4 chapters, matching the Free (1-5) /

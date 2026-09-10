@@ -1,7 +1,8 @@
-import { Atlas, Canvas, Circle, Group, Path, Skia, rect, useImage } from '@shopify/react-native-skia';
-import { memo, useEffect, useMemo } from 'react';
+import { Atlas, Canvas, Circle, Group, Path, Skia, rect, useImage, type SkPath } from '@shopify/react-native-skia';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Easing,
+  runOnJS,
   useDerivedValue,
   useSharedValue,
   withRepeat,
@@ -19,7 +20,10 @@ interface WorldCanvasProps {
   currentBlockId: string;
   heroCell: Position;
   facing: Direction;
-  isMoving: boolean;
+  /** Whether the player is currently holding a movement direction (drives idle vs. run sprite —
+   *  intentionally NOT the same as "a single step's slide animation is in flight", which flips
+   *  true/false every ~220ms during continuous movement and would flicker the sprite sheet). */
+  isHolding: boolean;
   width: number;
   height: number;
 }
@@ -37,6 +41,88 @@ function cellSizeForWorld(world: MazeWorld, viewportWidth: number, viewportHeigh
   return Math.min(viewportWidth / (maxBlockWidth + 1), viewportHeight / (maxBlockHeight + 1));
 }
 
+/** One possible wall line segment (a cell's side). Geometry is fixed; whether it's "filled"
+ *  (drawn as a wall) depends only on which maze state you check it against. */
+interface WallSlot {
+  key: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** null for a boundary/gateway side, which is always filled regardless of scrambling. */
+  edge: string | null;
+}
+
+function enumerateWallSlots(block: MazeBlock, openSides: ReadonlySet<string>): WallSlot[] {
+  const { maze } = block;
+  const slots: WallSlot[] = [];
+
+  for (const key of maze.activeCells) {
+    const [x, y] = key.split(',').map(Number);
+    const cell = { x, y };
+
+    const top = { x, y: y - 1 };
+    if (!openSides.has(`${x},${y}:up`)) {
+      const boundary = !maze.activeCells.has(posKey(top));
+      slots.push({ key: `${x},${y}:up`, x1: x, y1: y, x2: x + 1, y2: y, edge: boundary ? null : edgeKey(cell, top) });
+    }
+
+    const left = { x: x - 1, y };
+    if (!openSides.has(`${x},${y}:left`)) {
+      const boundary = !maze.activeCells.has(posKey(left));
+      slots.push({ key: `${x},${y}:left`, x1: x, y1: y, x2: x, y2: y + 1, edge: boundary ? null : edgeKey(cell, left) });
+    }
+
+    const right = { x: x + 1, y };
+    if (!openSides.has(`${x},${y}:right`)) {
+      const boundary = !maze.activeCells.has(posKey(right));
+      slots.push({
+        key: `${x},${y}:right`,
+        x1: x + 1,
+        y1: y,
+        x2: x + 1,
+        y2: y + 1,
+        edge: boundary ? null : edgeKey(cell, right),
+      });
+    }
+
+    const bottom = { x, y: y + 1 };
+    if (!openSides.has(`${x},${y}:down`)) {
+      const boundary = !maze.activeCells.has(posKey(bottom));
+      slots.push({
+        key: `${x},${y}:down`,
+        x1: x,
+        y1: y + 1,
+        x2: x + 1,
+        y2: y + 1,
+        edge: boundary ? null : edgeKey(cell, bottom),
+      });
+    }
+  }
+
+  return slots;
+}
+
+function isFilled(slot: WallSlot, openEdges: ReadonlySet<string>): boolean {
+  return slot.edge === null || !openEdges.has(slot.edge);
+}
+
+function pathFromSlots(slots: WallSlot[], ox: number, oy: number, cellSize: number): SkPath {
+  const pb = Skia.PathBuilder.Make();
+  for (const s of slots) {
+    pb.moveTo(ox + s.x1 * cellSize, oy + s.y1 * cellSize);
+    pb.lineTo(ox + s.x2 * cellSize, oy + s.y2 * cellSize);
+  }
+  return pb.build();
+}
+
+const SCRAMBLE_TRANSITION_MS = 380;
+
+interface WallTransition {
+  appearing: WallSlot[];
+  disappearing: WallSlot[];
+}
+
 const BlockWalls = memo(function BlockWalls({
   block,
   openSides,
@@ -46,57 +132,91 @@ const BlockWalls = memo(function BlockWalls({
   openSides: ReadonlySet<string>;
   cellSize: number;
 }) {
-  const path = useMemo(() => {
-    const pb = Skia.PathBuilder.Make();
-    const { maze, worldOffsetX, worldOffsetY } = block;
-    const ox = worldOffsetX * cellSize;
-    const oy = worldOffsetY * cellSize;
+  const ox = block.worldOffsetX * cellSize;
+  const oy = block.worldOffsetY * cellSize;
 
-    for (const key of maze.activeCells) {
-      const [x, y] = key.split(',').map(Number);
-      const cell = { x, y };
+  // Slot geometry only depends on the block's shape/gateways, which never change after
+  // generation — activeCells keeps the same Set reference across scrambles (scrambleMaze only
+  // replaces openEdges), so this is effectively computed once per block.
+  const allSlots = useMemo(() => enumerateWallSlots(block, openSides), [block.maze.activeCells, openSides]);
 
-      const top = { x, y: y - 1 };
-      if (
-        !openSides.has(`${x},${y}:up`) &&
-        (!maze.activeCells.has(posKey(top)) || !maze.openEdges.has(edgeKey(cell, top)))
-      ) {
-        pb.moveTo(ox + x * cellSize, oy + y * cellSize);
-        pb.lineTo(ox + (x + 1) * cellSize, oy + y * cellSize);
+  // On a scramble, only the wall slots whose filled-state actually changed should animate —
+  // everything else stays perfectly still, so the player watches specific walls open/close in
+  // place instead of the whole maze blinking away and back.
+  const prevOpenEdgesRef = useRef(block.maze.openEdges);
+  const [transition, setTransition] = useState<WallTransition | null>(null);
+  const appearOpacity = useSharedValue(1);
+  const disappearOpacity = useSharedValue(1);
+
+  useEffect(() => {
+    if (prevOpenEdgesRef.current === block.maze.openEdges) return;
+    const oldEdges = prevOpenEdgesRef.current;
+    const newEdges = block.maze.openEdges;
+    prevOpenEdgesRef.current = newEdges;
+
+    const appearing = allSlots.filter((s) => !isFilled(s, oldEdges) && isFilled(s, newEdges));
+    const disappearing = allSlots.filter((s) => isFilled(s, oldEdges) && !isFilled(s, newEdges));
+    if (appearing.length === 0 && disappearing.length === 0) return;
+
+    setTransition({ appearing, disappearing });
+    disappearOpacity.value = 1;
+    disappearOpacity.value = withTiming(0, { duration: SCRAMBLE_TRANSITION_MS, easing: Easing.inOut(Easing.ease) });
+    appearOpacity.value = 0;
+    appearOpacity.value = withTiming(
+      1,
+      { duration: SCRAMBLE_TRANSITION_MS, easing: Easing.inOut(Easing.ease) },
+      (finished) => {
+        if (finished) runOnJS(setTransition)(null);
       }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.maze.openEdges, allSlots]);
 
-      const left = { x: x - 1, y };
-      if (
-        !openSides.has(`${x},${y}:left`) &&
-        (!maze.activeCells.has(posKey(left)) || !maze.openEdges.has(edgeKey(cell, left)))
-      ) {
-        pb.moveTo(ox + x * cellSize, oy + y * cellSize);
-        pb.lineTo(ox + x * cellSize, oy + (y + 1) * cellSize);
-      }
+  const transitioningKeys = useMemo(
+    () => (transition ? new Set([...transition.appearing, ...transition.disappearing].map((s) => s.key)) : null),
+    [transition]
+  );
 
-      const right = { x: x + 1, y };
-      if (
-        !openSides.has(`${x},${y}:right`) &&
-        (!maze.activeCells.has(posKey(right)) || !maze.openEdges.has(edgeKey(cell, right)))
-      ) {
-        pb.moveTo(ox + (x + 1) * cellSize, oy + y * cellSize);
-        pb.lineTo(ox + (x + 1) * cellSize, oy + (y + 1) * cellSize);
-      }
+  // Everything NOT currently mid-transition — drawn once, statically, never re-animated.
+  const staticPath = useMemo(() => {
+    const filled = allSlots.filter((s) => isFilled(s, block.maze.openEdges) && !transitioningKeys?.has(s.key));
+    return pathFromSlots(filled, ox, oy, cellSize);
+  }, [allSlots, block.maze.openEdges, transitioningKeys, ox, oy, cellSize]);
 
-      const bottom = { x, y: y + 1 };
-      if (
-        !openSides.has(`${x},${y}:down`) &&
-        (!maze.activeCells.has(posKey(bottom)) || !maze.openEdges.has(edgeKey(cell, bottom)))
-      ) {
-        pb.moveTo(ox + x * cellSize, oy + (y + 1) * cellSize);
-        pb.lineTo(ox + (x + 1) * cellSize, oy + (y + 1) * cellSize);
-      }
-    }
+  const appearingPath = useMemo(
+    () => (transition ? pathFromSlots(transition.appearing, ox, oy, cellSize) : null),
+    [transition, ox, oy, cellSize]
+  );
+  const disappearingPath = useMemo(
+    () => (transition ? pathFromSlots(transition.disappearing, ox, oy, cellSize) : null),
+    [transition, ox, oy, cellSize]
+  );
 
-    return pb.build();
-  }, [block, openSides, cellSize]);
-
-  return <Path path={path} color="#111111" style="stroke" strokeWidth={2.5} strokeJoin="round" />;
+  return (
+    <>
+      <Path path={staticPath} color="#111111" style="stroke" strokeWidth={2.5} strokeJoin="round" />
+      {disappearingPath && (
+        <Path
+          path={disappearingPath}
+          color="#111111"
+          style="stroke"
+          strokeWidth={2.5}
+          strokeJoin="round"
+          opacity={disappearOpacity}
+        />
+      )}
+      {appearingPath && (
+        <Path
+          path={appearingPath}
+          color="#111111"
+          style="stroke"
+          strokeWidth={2.5}
+          strokeJoin="round"
+          opacity={appearOpacity}
+        />
+      )}
+    </>
+  );
 });
 
 function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number }) {
@@ -145,7 +265,7 @@ export const WorldCanvas = memo(function WorldCanvas({
   currentBlockId,
   heroCell,
   facing,
-  isMoving,
+  isHolding,
   width,
   height,
 }: WorldCanvasProps) {
@@ -172,12 +292,15 @@ export const WorldCanvas = memo(function WorldCanvas({
   const cameraInitialized = useSharedValue(false);
 
   useEffect(() => {
-    // Anchor the current block's top-left near the viewport's top-left (with a little breathing
-    // room) rather than centering it — centering leaves a symmetric gap around every block that
-    // isn't exactly viewport-shaped, which reads as dead space right under the header.
-    const margin = cellSize * 0.6;
-    const targetX = margin - currentBlock.worldOffsetX * cellSize;
-    const targetY = margin - currentBlock.worldOffsetY * cellSize;
+    // Anchor the current block near the viewport's top rather than fully centering it — full
+    // centering left a symmetric gap around every block that isn't exactly viewport-shaped, which
+    // read as dead space right under the header. Splitting the leftover space (mostly toward the
+    // bottom, a little toward the top) balances the two complaints.
+    const marginX = cellSize * 0.6;
+    const leftoverY = height - currentBlock.maze.height * cellSize;
+    const marginY = Math.max(cellSize * 0.6, leftoverY * 0.25);
+    const targetX = marginX - currentBlock.worldOffsetX * cellSize;
+    const targetY = marginY - currentBlock.worldOffsetY * cellSize;
     if (!cameraInitialized.value) {
       cameraX.value = targetX;
       cameraY.value = targetY;
@@ -215,7 +338,7 @@ export const WorldCanvas = memo(function WorldCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroCell.x, heroCell.y, currentBlockId, cellSize]);
 
-  const animationName: HeroAnimationName = isMoving ? facing : 'idle';
+  const animationName: HeroAnimationName = isHolding ? facing : 'idle';
   const sheet = HERO_SHEETS[animationName];
   const fps = animationName === 'idle' ? IDLE_FPS : RUN_FPS;
   const frameIndexSV = useSpriteLoop(sheet.frames.length, fps);
