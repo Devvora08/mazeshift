@@ -40,16 +40,14 @@ export default function GameScreen() {
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
       </Text>
-      <Text className="mt-1 font-script text-base text-ink-soft">
+      <Text className={`mt-1 font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {secondsToScramble !== null
           ? `next scramble in ${secondsToScramble.toFixed(1)}s`
           : 'maze is calm here'}
       </Text>
 
       <View
-        className={`mt-4 flex-1 rounded-2xl border-2 ${
-          isFlashing ? 'border-spell-scramble' : 'border-ink/20'
-        }`}
+        className="mt-4 flex-1"
         onLayout={(e) => {
           const { width, height } = e.nativeEvent.layout;
           setCanvasSize({ width, height });

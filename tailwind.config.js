@@ -6,12 +6,12 @@ module.exports = {
     extend: {
       colors: {
         paper: {
-          DEFAULT: '#f3efe6',
-          dark: '#e7e1d2',
+          DEFAULT: '#f0f0f0',
+          dark: '#dcdcdc',
         },
         ink: {
-          DEFAULT: '#1c1a17',
-          soft: '#3a362f',
+          DEFAULT: '#111111',
+          soft: '#404040',
         },
         hero: '#c026d3',
         spell: {
