@@ -24,11 +24,11 @@ interface WorldCanvasProps {
   height: number;
 }
 
-const RUN_FPS = 10;
+const RUN_FPS = 12;
 const IDLE_FPS = 6;
 const HERO_HEIGHT_IN_CELLS = 1.7;
 const CAMERA_DURATION = 700;
-const MOVE_DURATION = 160;
+const MOVE_DURATION = 200;
 
 function cellSizeForWorld(world: MazeWorld, viewportWidth: number, viewportHeight: number): number {
   const maxBlockWidth = Math.max(...world.blocks.map((b) => b.maze.width));
@@ -140,7 +140,7 @@ function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number 
   );
 }
 
-export function WorldCanvas({
+export const WorldCanvas = memo(function WorldCanvas({
   world,
   currentBlockId,
   heroCell,
@@ -153,6 +153,18 @@ export function WorldCanvas({
 
   const currentBlock = world.blocks.find((b) => b.id === currentBlockId) ?? world.blocks[0];
   const endBlock = world.blocks[world.blocks.length - 1];
+
+  // Gateway "open side" lookups per block, computed once per world (never changes after
+  // generation) rather than rebuilt inline every render — that rebuild was invalidating every
+  // block's memoized wall path on every single sprite frame tick.
+  const openSidesByBlock = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const block of world.blocks) {
+      const gateways = world.gatewaysByBlock.get(block.id) ?? [];
+      map.set(block.id, new Set(gateways.map((g) => `${g.fromCell.x},${g.fromCell.y}:${g.direction}`)));
+    }
+    return map;
+  }, [world]);
 
   // Camera pans (translate only, no zoom) so the current block's center sits in the viewport center.
   const cameraX = useSharedValue(0);
@@ -206,23 +218,29 @@ export function WorldCanvas({
   const animationName: HeroAnimationName = isMoving ? facing : 'idle';
   const sheet = HERO_SHEETS[animationName];
   const fps = animationName === 'idle' ? IDLE_FPS : RUN_FPS;
-  const frameIndex = useSpriteLoop(sheet.frames.length, fps);
-  const heroFrame = sheet.frames[frameIndex];
-  const heroScale = (cellSize * HERO_HEIGHT_IN_CELLS) / heroFrame.height;
+  const frameIndexSV = useSpriteLoop(sheet.frames.length, fps);
+  // Every frame in a given sheet shares the same source height, so scale only depends on
+  // which sheet is active (idle vs a run direction) — safe to compute per-render, not per-frame.
+  const heroScale = (cellSize * HERO_HEIGHT_IN_CELLS) / sheet.frames[0].height;
 
   const heroImage = useImage(sheet.asset);
-  const heroSprites = useMemo(
-    () => [rect(heroFrame.x, heroFrame.y, heroFrame.width, heroFrame.height)],
-    [heroFrame]
-  );
-  const heroTransforms = useDerivedValue(() => [
-    Skia.RSXform(
-      heroScale,
-      0,
-      heroWorldX.value - (heroFrame.width * heroScale) / 2,
-      heroWorldY.value - heroFrame.height * heroScale
-    ),
-  ]);
+  // Both read frameIndexSV directly, so frame-swapping (up to 12x/sec while running) never
+  // triggers a React re-render — it stays entirely on the UI thread, same as the position tween.
+  const heroSprites = useDerivedValue(() => {
+    const f = sheet.frames[frameIndexSV.value] ?? sheet.frames[0];
+    return [rect(f.x, f.y, f.width, f.height)];
+  });
+  const heroTransforms = useDerivedValue(() => {
+    const f = sheet.frames[frameIndexSV.value] ?? sheet.frames[0];
+    return [
+      Skia.RSXform(
+        heroScale,
+        0,
+        heroWorldX.value - (f.width * heroScale) / 2,
+        heroWorldY.value - f.height * heroScale
+      ),
+    ];
+  });
 
   const exitWorldX = (endBlock.worldOffsetX + endBlock.maze.end.x + 0.5) * cellSize;
   const exitWorldY = (endBlock.worldOffsetY + endBlock.maze.end.y + 0.5) * cellSize;
@@ -230,11 +248,14 @@ export function WorldCanvas({
   return (
     <Canvas style={{ width, height }}>
       <Group transform={cameraTransform}>
-        {world.blocks.map((block) => {
-          const gateways = world.gatewaysByBlock.get(block.id) ?? [];
-          const openSides = new Set(gateways.map((g) => `${g.fromCell.x},${g.fromCell.y}:${g.direction}`));
-          return <BlockWalls key={block.id} block={block} openSides={openSides} cellSize={cellSize} />;
-        })}
+        {world.blocks.map((block) => (
+          <BlockWalls
+            key={block.id}
+            block={block}
+            openSides={openSidesByBlock.get(block.id) ?? new Set()}
+            cellSize={cellSize}
+          />
+        ))}
 
         <ExitRadar x={exitWorldX} y={exitWorldY} cellSize={cellSize} />
 
@@ -244,4 +265,4 @@ export function WorldCanvas({
       </Group>
     </Canvas>
   );
-}
+});

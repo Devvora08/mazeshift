@@ -46,7 +46,7 @@ export default function GameScreen() {
   // The store flips isMoving back off once the slide animation (MOVE_DURATION in WorldCanvas) settles.
   useEffect(() => {
     if (!isMoving) return;
-    const timeout = setTimeout(() => finishMove(), 180);
+    const timeout = setTimeout(() => finishMove(), 220);
     return () => clearTimeout(timeout);
   }, [isMoving, heroCell, finishMove]);
 
