@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 
 import { Joystick } from '../../components/Joystick';
+import { SigilCanvas } from '../../components/SigilCanvas';
 import { WorldCanvas } from '../../components/WorldCanvas';
+import type { UtilityType } from '../../lib/modules/utilities';
 import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
 
@@ -23,10 +25,14 @@ export default function GameScreen() {
   const nextScrambleAt = useGameStore((s) => s.nextScrambleAt);
   const scrambleFlashUntil = useGameStore((s) => s.scrambleFlashUntil);
   const reachedExit = useGameStore((s) => s.reachedExit);
+  const inventory = useGameStore((s) => s.inventory);
+  const pickups = useGameStore((s) => s.pickups);
+  const feedback = useGameStore((s) => s.feedback);
   const loadLevel = useGameStore((s) => s.loadLevel);
   const checkScramble = useGameStore((s) => s.checkScramble);
   const move = useGameStore((s) => s.move);
   const finishMove = useGameStore((s) => s.finishMove);
+  const castSigil = useGameStore((s) => s.castSigil);
 
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [now, setNow] = useState(Date.now());
@@ -73,8 +79,21 @@ export default function GameScreen() {
     [move]
   );
 
+  const handleSigilComplete = useCallback(
+    (type: UtilityType | null) => {
+      if (type) castSigil(type);
+    },
+    [castSigil]
+  );
+
   const isFlashing = scrambleFlashUntil !== null && now < scrambleFlashUntil;
   const secondsToScramble = nextScrambleAt !== null ? Math.max(0, (nextScrambleAt - now) / 1000) : null;
+  const isFeedbackVisible = feedback !== null && now < feedback.until;
+
+  const inventoryCounts = inventory.reduce<Partial<Record<UtilityType, number>>>((acc, type) => {
+    acc[type] = (acc[type] ?? 0) + 1;
+    return acc;
+  }, {});
 
   return (
     <View className="flex-1 bg-paper px-4 pt-14">
@@ -82,12 +101,21 @@ export default function GameScreen() {
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
-        {reachedExit
-          ? 'you made it out'
-          : secondsToScramble !== null
-            ? `next scramble in ${secondsToScramble.toFixed(1)}s`
-            : 'maze is calm here'}
+        {isFeedbackVisible
+          ? feedback!.message
+          : reachedExit
+            ? 'you made it out'
+            : secondsToScramble !== null
+              ? `next scramble in ${secondsToScramble.toFixed(1)}s`
+              : 'maze is calm here'}
       </Text>
+      {Object.keys(inventoryCounts).length > 0 && (
+        <Text className="font-script text-sm text-ink-soft">
+          {Object.entries(inventoryCounts)
+            .map(([type, count]) => `${type} x${count}`)
+            .join('   ')}
+        </Text>
+      )}
 
       <View
         className="mt-1 flex-1"
@@ -97,15 +125,19 @@ export default function GameScreen() {
         }}
       >
         {world && currentBlockId && heroCell && canvasSize.width > 0 && canvasSize.height > 0 && (
-          <WorldCanvas
-            world={world}
-            currentBlockId={currentBlockId}
-            heroCell={heroCell}
-            facing={heldDir ?? facing}
-            isHolding={heldDir !== null}
-            width={canvasSize.width}
-            height={canvasSize.height}
-          />
+          <>
+            <WorldCanvas
+              world={world}
+              currentBlockId={currentBlockId}
+              heroCell={heroCell}
+              facing={heldDir ?? facing}
+              isHolding={heldDir !== null}
+              pickups={pickups}
+              width={canvasSize.width}
+              height={canvasSize.height}
+            />
+            <SigilCanvas width={canvasSize.width} height={canvasSize.height} onComplete={handleSigilComplete} />
+          </>
         )}
       </View>
 

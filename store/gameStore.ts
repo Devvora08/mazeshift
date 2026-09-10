@@ -1,21 +1,23 @@
 import { create } from 'zustand';
 
 import { getLevel } from '../lib/levels/data';
+import { PRACTICE_LEVEL, practicePickups } from '../lib/levels/practice';
 import type { LevelConfig } from '../lib/levels/types';
 import { edgeKey, posKey } from '../lib/maze/graph';
 import { createRng, type Rng } from '../lib/maze/rng';
 import type { Position } from '../lib/maze/types';
-import { generateWorld, type MazeWorld } from '../lib/maze/world';
+import { DIRECTION_DELTAS, generateWorld, type Direction, type MazeWorld } from '../lib/maze/world';
 import { scheduleNextScramble, tickScramble } from '../lib/modules/scramble';
+import { applyDestroy, findWallTarget, type UtilityType } from '../lib/modules/utilities';
 
-export type Direction = 'up' | 'down' | 'left' | 'right';
+export type { Direction };
 
-const DELTAS: Record<Direction, Position> = {
-  up: { x: 0, y: -1 },
-  down: { x: 0, y: 1 },
-  left: { x: -1, y: 0 },
-  right: { x: 1, y: 0 },
-};
+const DELTAS = DIRECTION_DELTAS;
+const FEEDBACK_MS = 1400;
+
+function pickupKey(blockId: string, cell: Position): string {
+  return `${blockId}:${posKey(cell)}`;
+}
 
 interface GameState {
   level: LevelConfig | null;
@@ -31,6 +33,11 @@ interface GameState {
   rng: Rng | null;
   reachedExit: boolean;
 
+  inventory: UtilityType[];
+  /** keyed by "blockId:x,y" — cleared as each is picked up. */
+  pickups: Map<string, UtilityType>;
+  feedback: { message: string; until: number } | null;
+
   loadLevel: (id: number) => void;
   /** Call every frame/tick with the current time; scrambles when due. */
   checkScramble: (now: number) => void;
@@ -38,6 +45,9 @@ interface GameState {
   move: (dir: Direction) => boolean;
   /** UI calls this once the move's slide animation finishes, unblocking the next input. */
   finishMove: () => void;
+  /** A sigil was recognized from a drawn stroke — acquire it if standing on a matching pickup,
+   *  otherwise try to cast it from inventory. */
+  castSigil: (type: UtilityType) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -51,9 +61,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   scrambleFlashUntil: null,
   rng: null,
   reachedExit: false,
+  inventory: [],
+  pickups: new Map(),
+  feedback: null,
 
   loadLevel: (id) => {
-    const level = getLevel(id);
+    const level = id === 0 ? PRACTICE_LEVEL : getLevel(id);
     if (!level) throw new Error(`Unknown level id: ${id}`);
 
     const rng = createRng(id * 7919 + 13);
@@ -62,6 +75,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     const nextScrambleAt = level.scramble.enabled
       ? scheduleNextScramble(level.scramble, rng, Date.now())
       : null;
+
+    const pickups = new Map<string, UtilityType>();
+    if (id === 0) {
+      for (const p of practicePickups(startBlock.maze)) {
+        pickups.set(pickupKey(startBlock.id, p.cell), p.type);
+      }
+    }
 
     set({
       level,
@@ -74,6 +94,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       nextScrambleAt,
       scrambleFlashUntil: null,
       reachedExit: false,
+      inventory: [],
+      pickups,
+      feedback: null,
     });
   },
 
@@ -140,5 +163,60 @@ export const useGameStore = create<GameState>((set, get) => ({
       nextScrambleAt: result.nextScrambleAt,
       scrambleFlashUntil: result.flashUntil,
     });
+  },
+
+  castSigil: (type) => {
+    const { world, level, currentBlockId, heroCell, facing, inventory, pickups } = get();
+    if (!world || !level || !currentBlockId || !heroCell) return;
+    const blockIndex = world.blocks.findIndex((b) => b.id === currentBlockId);
+    if (blockIndex === -1) return;
+    const block = world.blocks[blockIndex];
+    const say = (message: string) => set({ feedback: { message, until: Date.now() + FEEDBACK_MS } });
+
+    // 1. Standing on a matching pickup — acquire it.
+    const key = pickupKey(currentBlockId, heroCell);
+    if (pickups.get(key) === type) {
+      if (inventory.length >= level.inventoryCap) {
+        say('Inventory full');
+        return;
+      }
+      const nextPickups = new Map(pickups);
+      nextPickups.delete(key);
+      set({ inventory: [...inventory, type], pickups: nextPickups });
+      say(`Acquired ${type}`);
+      return;
+    }
+
+    // 2. Otherwise, try to cast it from inventory.
+    const heldIndex = inventory.indexOf(type);
+    if (heldIndex === -1) {
+      say(`No ${type} to cast`);
+      return;
+    }
+
+    if (type !== 'phase' && type !== 'destroy') {
+      say(`${type} isn't implemented yet`);
+      return;
+    }
+
+    const target = findWallTarget(block, heroCell, facing);
+    if (!target) {
+      say('No wall there');
+      return;
+    }
+
+    const nextInventory = inventory.slice();
+    nextInventory.splice(heldIndex, 1);
+
+    if (type === 'destroy') {
+      const nextMaze = applyDestroy(block.maze, target);
+      const blocks = world.blocks.slice();
+      blocks[blockIndex] = { ...block, maze: nextMaze };
+      set({ world: { ...world, blocks }, inventory: nextInventory });
+      say('Wall destroyed');
+    } else {
+      set({ heroCell: target.neighbor, inventory: nextInventory });
+      say('Phased through');
+    }
   },
 }));

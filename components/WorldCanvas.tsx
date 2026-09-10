@@ -13,6 +13,7 @@ import { edgeKey, posKey } from '../lib/maze/graph';
 import { HERO_SHEETS, type HeroAnimationName } from '../lib/sprites/heroFrames';
 import type { Direction, MazeBlock, MazeWorld } from '../lib/maze/world';
 import type { Position } from '../lib/maze/types';
+import { SPELL_COLORS, type UtilityType } from '../lib/modules/utilities';
 import { useSpriteLoop } from '../hooks/useSpriteLoop';
 
 interface WorldCanvasProps {
@@ -24,6 +25,8 @@ interface WorldCanvasProps {
    *  intentionally NOT the same as "a single step's slide animation is in flight", which flips
    *  true/false every ~220ms during continuous movement and would flicker the sprite sheet). */
   isHolding: boolean;
+  /** keyed by "blockId:x,y", same shape as gameStore's pickups map. */
+  pickups: Map<string, UtilityType>;
   width: number;
   height: number;
 }
@@ -260,12 +263,27 @@ function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number 
   );
 }
 
+/** A colored, gently pulsing dot marking where a utility can be traced up — the only other spot
+ *  of color in the otherwise monochrome world besides the hero, per the art direction. */
+function PickupMarker({ x, y, cellSize, color }: { x: number; y: number; cellSize: number; color: string }) {
+  const pulse = useSharedValue(0);
+
+  useEffect(() => {
+    pulse.value = withRepeat(withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [pulse]);
+
+  const radius = useDerivedValue(() => cellSize * (0.16 + 0.05 * pulse.value));
+
+  return <Circle cx={x} cy={y} r={radius} color={color} />;
+}
+
 export const WorldCanvas = memo(function WorldCanvas({
   world,
   currentBlockId,
   heroCell,
   facing,
   isHolding,
+  pickups,
   width,
   height,
 }: WorldCanvasProps) {
@@ -273,6 +291,24 @@ export const WorldCanvas = memo(function WorldCanvas({
 
   const currentBlock = world.blocks.find((b) => b.id === currentBlockId) ?? world.blocks[0];
   const endBlock = world.blocks[world.blocks.length - 1];
+
+  const pickupMarkers = useMemo(() => {
+    const markers: { key: string; x: number; y: number; color: string }[] = [];
+    for (const [key, type] of pickups) {
+      const sep = key.indexOf(':');
+      const blockId = key.slice(0, sep);
+      const [cx, cy] = key.slice(sep + 1).split(',').map(Number);
+      const block = world.blocks.find((b) => b.id === blockId);
+      if (!block) continue;
+      markers.push({
+        key,
+        x: (block.worldOffsetX + cx + 0.5) * cellSize,
+        y: (block.worldOffsetY + cy + 0.5) * cellSize,
+        color: SPELL_COLORS[type],
+      });
+    }
+    return markers;
+  }, [pickups, world, cellSize]);
 
   // Gateway "open side" lookups per block, computed once per world (never changes after
   // generation) rather than rebuilt inline every render — that rebuild was invalidating every
@@ -381,6 +417,10 @@ export const WorldCanvas = memo(function WorldCanvas({
         ))}
 
         <ExitRadar x={exitWorldX} y={exitWorldY} cellSize={cellSize} />
+
+        {pickupMarkers.map((m) => (
+          <PickupMarker key={m.key} x={m.x} y={m.y} cellSize={cellSize} color={m.color} />
+        ))}
 
         {heroImage && (
           <Atlas image={heroImage} sprites={heroSprites} transforms={heroTransforms} />

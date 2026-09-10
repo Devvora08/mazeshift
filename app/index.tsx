@@ -12,6 +12,11 @@ export default function Home() {
       </Text>
 
       <ScrollView className="mt-8" contentContainerClassName="gap-2 pb-8">
+        <Link href={{ pathname: '/game/[id]', params: { id: '0' } }} asChild>
+          <Text className="rounded-xl border border-spell-phase px-4 py-3 font-script text-lg text-ink">
+            Practice — try out spells
+          </Text>
+        </Link>
         {LEVELS.map((level) => (
           <Link
             key={level.id}
