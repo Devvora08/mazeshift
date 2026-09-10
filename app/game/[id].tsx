@@ -2,7 +2,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 
-import { Joystick } from '../../components/Joystick';
+import { DPad } from '../../components/DPad';
 import { SigilCanvas } from '../../components/SigilCanvas';
 import { WorldCanvas } from '../../components/WorldCanvas';
 import type { UtilityType } from '../../lib/modules/utilities';
@@ -70,7 +70,7 @@ export default function GameScreen() {
     return () => clearInterval(interval);
   }, [move]);
 
-  const handleJoystickDirection = useCallback(
+  const handleDirectionChange = useCallback(
     (dir: Direction | null) => {
       heldDirection.current = dir;
       setHeldDir(dir);
@@ -142,7 +142,7 @@ export default function GameScreen() {
       </View>
 
       <View className="h-72 items-center">
-        <Joystick onDirectionChange={handleJoystickDirection} />
+        <DPad onDirectionChange={handleDirectionChange} />
       </View>
     </View>
   );

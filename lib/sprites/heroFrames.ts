@@ -60,15 +60,19 @@ export const HERO_SHEETS = {
     ] satisfies FrameRect[],
   },
   right: {
-    asset: require('../../assets/right.png'),
-    imageWidth: 780,
-    imageHeight: 165,
+    // 8-frame replacement (up from 5) specifically for a smoother right-run cycle.
+    asset: require('../../assets/right_new.png'),
+    imageWidth: 2170,
+    imageHeight: 725,
     frames: [
-      { x: 8, y: 0, width: 104, height: 165 },
-      { x: 169, y: 0, width: 107, height: 165 },
-      { x: 310, y: 0, width: 112, height: 165 },
-      { x: 457, y: 0, width: 109, height: 165 },
-      { x: 604, y: 0, width: 107, height: 165 },
+      { x: 15, y: 0, width: 240, height: 725 },
+      { x: 280, y: 0, width: 248, height: 725 },
+      { x: 548, y: 0, width: 253, height: 725 },
+      { x: 817, y: 0, width: 251, height: 725 },
+      { x: 1100, y: 0, width: 246, height: 725 },
+      { x: 1367, y: 0, width: 236, height: 725 },
+      { x: 1628, y: 0, width: 245, height: 725 },
+      { x: 1901, y: 0, width: 240, height: 725 },
     ] satisfies FrameRect[],
   },
 } as const;
