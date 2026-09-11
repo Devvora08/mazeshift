@@ -1,4 +1,3 @@
-export type { MonsterType } from './types';
-
-// AI/pathing logic and rendering land here once monsters are built — see lib/modules/scramble
-// for the reference shape (types.ts + logic.ts + index.ts barrel).
+export type { MonsterType, Monster, Travel, WorldCell } from './types';
+export { spawnMonsters, tickMonsters, touches } from './logic';
+export { MONSTER_STEP_MS, BOMB_FUSE_MS, TRACK_RADIUS } from './navigation';

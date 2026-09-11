@@ -36,7 +36,8 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo run:android"
+    "android": "expo run:android",
+    "test:monsters": "node scripts/test-monsters.cjs"
   },
   "private": true
 }

@@ -42,6 +42,7 @@ export function scrambleMaze(maze: Maze, rng: Rng, intensity: number): ScrambleR
     if (changedEdges >= intensity) break;
 
     const key = edgeKey(a, b);
+    if (maze.destroyedEdges?.has(key)) continue;
     const isOpen = openEdges.has(key);
 
     if (isOpen) {

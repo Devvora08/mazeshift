@@ -3,12 +3,15 @@ import { create } from 'zustand';
 import { getLevel } from '../lib/levels/data';
 import { PRACTICE_LEVEL, practicePickups } from '../lib/levels/practice';
 import type { LevelConfig } from '../lib/levels/types';
-import { edgeKey, posKey } from '../lib/maze/graph';
+import { edgeKey, isReachable, posKey } from '../lib/maze/graph';
 import { createRng, type Rng } from '../lib/maze/rng';
 import type { Position } from '../lib/maze/types';
 import { DIRECTION_DELTAS, generateWorld, type Direction, type MazeWorld } from '../lib/maze/world';
 import { scheduleNextScramble, tickScramble } from '../lib/modules/scramble';
 import { applyDestroy, findWallTarget, type UtilityType } from '../lib/modules/utilities';
+import { spawnMonsters, tickMonsters, touches, type Monster, type Travel, type WorldCell } from '../lib/modules/monsters';
+
+export const HERO_STEP_MS = 200;
 
 export type { Direction };
 
@@ -32,6 +35,16 @@ interface GameState {
   scrambleFlashUntil: number | null;
   rng: Rng | null;
   reachedExit: boolean;
+  monsters: Monster[];
+  simulationTime: number;
+  heroTravel: Travel | null;
+  caughtBy: Monster['type'] | null;
+  stalkerAlert: boolean;
+  paused: boolean;
+  pausedAt: number | null;
+  runId: number;
+  tick: (deltaMs: number) => void;
+  setPaused: (paused: boolean) => void;
 
   inventory: UtilityType[];
   /** keyed by "blockId:x,y" — cleared as each is picked up. */
@@ -61,6 +74,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   scrambleFlashUntil: null,
   rng: null,
   reachedExit: false,
+  monsters: [],
+  simulationTime: 0,
+  heroTravel: null,
+  caughtBy: null,
+  stalkerAlert: false,
+  paused: false,
+  pausedAt: null,
+  runId: 0,
   inventory: [],
   pickups: new Map(),
   feedback: null,
@@ -94,6 +115,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       nextScrambleAt,
       scrambleFlashUntil: null,
       reachedExit: false,
+      monsters: spawnMonsters(world, level.monsters),
+      simulationTime: 0,
+      heroTravel: null,
+      caughtBy: null,
+      stalkerAlert: false,
+      paused: false,
+      pausedAt: null,
+      runId: get().runId + 1,
       inventory: [],
       pickups,
       feedback: null,
@@ -102,7 +131,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   move: (dir) => {
     const { world, level, currentBlockId, heroCell, isMoving, rng } = get();
-    if (!world || !level || !currentBlockId || !heroCell || !rng || isMoving) return false;
+    if (!world || !level || !currentBlockId || !heroCell || !rng || isMoving || get().caughtBy || get().paused || get().reachedExit) return false;
+    const from = { blockId: currentBlockId, cell: heroCell };
+    const travelTo = (to: WorldCell): Travel => ({ from, to, startedAt: get().simulationTime, duration: HERO_STEP_MS });
 
     const block = world.blocks.find((b) => b.id === currentBlockId);
     if (!block) return false;
@@ -112,8 +143,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     // 1. A normal step within the current block's maze.
     if (block.maze.activeCells.has(posKey(target)) && block.maze.openEdges.has(edgeKey(heroCell, target))) {
-      const isExit = currentBlockId === world.endBlockId && posKey(target) === posKey(block.maze.end);
-      set({ heroCell: target, facing: dir, isMoving: true, reachedExit: isExit });
+      set({ heroCell: target, facing: dir, isMoving: true, heroTravel: travelTo({ blockId: currentBlockId, cell: target }) });
       return true;
     }
 
@@ -129,6 +159,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         heroCell: gateway.toCell,
         facing: dir,
         isMoving: true,
+        heroTravel: travelTo({ blockId: gateway.toBlockId, cell: gateway.toCell }),
         nextScrambleAt,
         scrambleFlashUntil: null,
       });
@@ -138,11 +169,49 @@ export const useGameStore = create<GameState>((set, get) => ({
     return false;
   },
 
-  finishMove: () => set({ isMoving: false }),
+  finishMove: () => {
+    const state = get();
+    if (state.paused || state.caughtBy) return;
+    // Contact is resolved by the simulation before a completion may grant a win.
+    if (state.heroTravel && state.heroCell && state.currentBlockId) {
+      const through = Math.max(state.simulationTime, state.heroTravel.startedAt + state.heroTravel.duration);
+      const hero = { blockId: state.currentBlockId, cell: state.heroCell };
+      const caught = state.monsters.find(m => touches(hero, state.heroTravel, m.location, m.travel, state.simulationTime, through));
+      if (caught) { set({ caughtBy: caught.type, isMoving: false, stalkerAlert: false }); return; }
+    }
+    const end = state.world?.blocks.find(b => b.id === state.world!.endBlockId);
+    set({ isMoving: false, heroTravel: null, reachedExit: !!end && state.currentBlockId === end.id
+      && !!state.heroCell && posKey(state.heroCell) === posKey(end.maze.end) });
+  },
+
+  setPaused: (paused) => {
+    const state = get();
+    if (paused === state.paused) return;
+    const now = Date.now();
+    set({ paused, pausedAt: paused ? now : null,
+      nextScrambleAt: !paused && state.pausedAt !== null && state.nextScrambleAt !== null
+        ? state.nextScrambleAt + now - state.pausedAt : state.nextScrambleAt });
+  },
+
+  tick: (deltaMs) => {
+    const s = get();
+    if (!s.world || !s.heroCell || !s.currentBlockId || s.paused || s.caughtBy || s.reachedExit) return;
+    // Small bounded ticks; background time is discarded by the screen lifecycle.
+    const now = s.simulationTime + Math.max(0, Math.min(deltaMs, 50));
+    const hero = { blockId: s.currentBlockId, cell: s.heroCell };
+    const caught = s.monsters.find(m => touches(hero, s.heroTravel, m.location, m.travel, s.simulationTime, now));
+    if (caught) {
+      set({ simulationTime: now, caughtBy: caught.type, isMoving: false, stalkerAlert: false });
+      return;
+    }
+    const sensedHero = s.heroTravel && now < s.heroTravel.startedAt + s.heroTravel.duration / 2 ? s.heroTravel.from : hero;
+    const result = tickMonsters(s.world, s.monsters, sensedHero, now);
+    set({ simulationTime: now, world: result.world, monsters: result.monsters, stalkerAlert: result.alert });
+  },
 
   checkScramble: (now) => {
     const { level, world, currentBlockId, rng, nextScrambleAt } = get();
-    if (!level || !world || !currentBlockId || !rng) return;
+    if (!level || !world || !currentBlockId || !rng || get().paused || get().caughtBy || get().reachedExit) return;
 
     const blockIndex = world.blocks.findIndex((b) => b.id === currentBlockId);
     if (blockIndex === -1) return;
@@ -156,8 +225,25 @@ export const useGameStore = create<GameState>((set, get) => ({
       return;
     }
 
+    // Reserve edges already in use: a scramble cannot close a passage mid-step.
+    const openEdges = new Set(result.maze.openEdges);
+    for (const travel of [get().heroTravel, ...get().monsters.map(m => m.travel)]) {
+      if (travel?.from.blockId === currentBlockId && travel.to.blockId === currentBlockId
+        && block.maze.openEdges.has(edgeKey(travel.from.cell, travel.to.cell))) {
+        openEdges.add(edgeKey(travel.from.cell, travel.to.cell));
+      }
+    }
+    const requiredCells = [get().heroCell!, ...(world.gatewaysByBlock.get(currentBlockId) ?? []).map(g => g.fromCell),
+      ...get().monsters.flatMap(m => [m.location, ...(m.travel ? [m.travel.to] : [])])
+        .filter(p => p.blockId === currentBlockId).map(p => p.cell)];
+    if (requiredCells.some(cell => !isReachable(openEdges, block.maze.width, block.maze.height,
+      block.maze.start, cell, block.maze.activeCells))) {
+      // Keep the openings from this scramble, but reject its closures if an actor
+      // or gateway would be stranded. This also preserves reciprocal block access.
+      for (const edge of block.maze.openEdges) openEdges.add(edge);
+    }
     const blocks = world.blocks.slice();
-    blocks[blockIndex] = { ...block, maze: result.maze };
+    blocks[blockIndex] = { ...block, maze: { ...result.maze, openEdges } };
     set({
       world: { ...world, blocks },
       nextScrambleAt: result.nextScrambleAt,
@@ -167,7 +253,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   castSigil: (type) => {
     const { world, level, currentBlockId, heroCell, facing, inventory, pickups } = get();
-    if (!world || !level || !currentBlockId || !heroCell) return;
+    if (!world || !level || !currentBlockId || !heroCell || get().caughtBy || get().paused || get().reachedExit || get().isMoving) return;
     const blockIndex = world.blocks.findIndex((b) => b.id === currentBlockId);
     if (blockIndex === -1) return;
     const block = world.blocks[blockIndex];
@@ -215,7 +301,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       set({ world: { ...world, blocks }, inventory: nextInventory });
       say('Wall destroyed');
     } else {
-      set({ heroCell: target.neighbor, inventory: nextInventory });
+      set({ heroCell: target.neighbor, inventory: nextInventory, isMoving: true,
+        heroTravel: { from: { blockId: currentBlockId, cell: heroCell }, to: { blockId: currentBlockId, cell: target.neighbor },
+          startedAt: get().simulationTime, duration: HERO_STEP_MS } });
       say('Phased through');
     }
   },

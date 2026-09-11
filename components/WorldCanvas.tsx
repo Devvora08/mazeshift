@@ -4,6 +4,7 @@ import {
 import { memo, useCallback, useEffect, useMemo } from 'react';
 import {
   Easing,
+  cancelAnimation,
   type SharedValue,
   runOnJS,
   useDerivedValue,
@@ -14,6 +15,9 @@ import {
 } from 'react-native-reanimated';
 
 import { BlockWalls } from './BlockWalls';
+import { MonsterSprite } from './MonsterSprite';
+import type { Monster } from '../lib/modules/monsters';
+import { HERO_STEP_MS, useGameStore } from '../store/gameStore';
 import { HERO_SHEETS, type HeroAnimationName } from '../lib/sprites/heroFrames';
 import type { Direction, MazeWorld } from '../lib/maze/world';
 import type { Position } from '../lib/maze/types';
@@ -33,6 +37,8 @@ interface WorldCanvasProps {
   onMoveComplete: () => void;
   /** keyed by "blockId:x,y", same shape as gameStore's pickups map. */
   pickups: Map<string, UtilityType>;
+  monsters: Monster[];
+  paused: boolean;
   width: number;
   height: number;
 }
@@ -41,7 +47,7 @@ const RUN_FPS = 12;
 const IDLE_FPS = 6;
 const HERO_HEIGHT_IN_CELLS = 1.7;
 const CAMERA_DURATION = 700;
-const MOVE_DURATION = 200;
+const MOVE_DURATION = HERO_STEP_MS;
 
 function cellSizeForWorld(world: MazeWorld, viewportWidth: number, viewportHeight: number): number {
   const maxBlockWidth = Math.max(...world.blocks.map((b) => b.maze.width));
@@ -210,9 +216,10 @@ function PickupMarker({ x, y, cellSize, image, color }: {
 const HERO_ANIMATIONS = Object.keys(HERO_SHEETS) as HeroAnimationName[];
 
 /** Keep decoded sheets mounted: an image can never use another sheet's rectangles. */
-const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, worldY }: {
+const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, worldY, paused }: {
   name: HeroAnimationName;
   active: boolean;
+  paused: boolean;
   cellSize: number;
   worldX: SharedValue<number>;
   worldY: SharedValue<number>;
@@ -221,7 +228,7 @@ const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, wo
   const image = useImage(sheet.asset);
   // Eight drawings take the same cycle time as five, rather than slowing the gait.
   const fps = name === 'idle' ? IDLE_FPS : RUN_FPS * sheet.frames.length / 5;
-  const frame = useSpriteLoop(sheet.frames.length, fps);
+  const frame = useSpriteLoop(sheet.frames.length, paused ? 0 : fps);
   const scale = cellSize * HERO_HEIGHT_IN_CELLS / sheet.frames[0].height;
   const sprites = useDerivedValue(() => {
     const f = sheet.frames[frame.value] ?? sheet.frames[0];
@@ -245,6 +252,8 @@ export const WorldCanvas = memo(function WorldCanvas({
   isHolding,
   onMoveComplete,
   pickups,
+  monsters,
+  paused,
   width,
   height,
 }: WorldCanvasProps) {
@@ -337,6 +346,10 @@ export const WorldCanvas = memo(function WorldCanvas({
   useEffect(() => {
     const targetX = (currentBlock.worldOffsetX + heroCell.x + 0.5) * cellSize;
     const targetY = (currentBlock.worldOffsetY + heroCell.y + 1) * cellSize;
+    if (paused) {
+      cancelAnimation(heroWorldX); cancelAnimation(heroWorldY);
+      return;
+    }
     if (!heroInitialized.value) {
       heroWorldX.value = targetX;
       heroWorldY.value = targetY;
@@ -349,13 +362,17 @@ export const WorldCanvas = memo(function WorldCanvas({
         'worklet';
         if (finished) runOnJS(onMoveComplete)();
       };
-      heroWorldX.value = withTiming(targetX, { duration: MOVE_DURATION, easing: Easing.linear },
+      const state = useGameStore.getState();
+      const remaining = state.heroTravel
+        ? Math.max(1, state.heroTravel.startedAt + state.heroTravel.duration - state.simulationTime) : MOVE_DURATION;
+      heroWorldX.value = withTiming(targetX, { duration: remaining, easing: Easing.linear },
         movesHorizontally ? onFinished : undefined);
-      heroWorldY.value = withTiming(targetY, { duration: MOVE_DURATION, easing: Easing.linear },
+      heroWorldY.value = withTiming(targetY, { duration: remaining, easing: Easing.linear },
         movesHorizontally ? undefined : onFinished);
     }
+    return () => { cancelAnimation(heroWorldX); cancelAnimation(heroWorldY); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [heroCell.x, heroCell.y, currentBlockId, cellSize, onMoveComplete]);
+  }, [heroCell.x, heroCell.y, currentBlockId, cellSize, onMoveComplete, paused]);
 
   const animationName: HeroAnimationName = isHolding ? facing : 'idle';
   const exitWorldX = (endBlock.worldOffsetX + endBlock.maze.end.x + 0.5) * cellSize;
@@ -380,9 +397,12 @@ export const WorldCanvas = memo(function WorldCanvas({
             image={spellIcons[m.type]} color={SPELL_COLORS[m.type]} />
         ))}
 
+        {monsters.map(monster => <MonsterSprite key={monster.id} monster={monster}
+          world={world} cellSize={cellSize} paused={paused} />)}
+
         {HERO_ANIMATIONS.map((name) => (
           <HeroSprite key={name} name={name} active={animationName === name}
-            cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} />
+            cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} paused={paused} />
         ))}
       </Group>
     </Canvas>
