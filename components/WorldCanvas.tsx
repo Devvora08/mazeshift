@@ -1,10 +1,13 @@
-import { Atlas, Canvas, Circle, Group, Skia, rect, useImage } from '@shopify/react-native-skia';
-import { memo, useEffect, useMemo } from 'react';
+import {
+  Atlas, BlurMask, Canvas, Circle, Group, Image, Path, type SkImage, Skia, rect, useImage,
+} from '@shopify/react-native-skia';
+import { memo, useCallback, useEffect, useMemo } from 'react';
 import {
   Easing,
   type SharedValue,
   runOnJS,
   useDerivedValue,
+  useFrameCallback,
   useSharedValue,
   withRepeat,
   withTiming,
@@ -14,7 +17,8 @@ import { BlockWalls } from './BlockWalls';
 import { HERO_SHEETS, type HeroAnimationName } from '../lib/sprites/heroFrames';
 import type { Direction, MazeWorld } from '../lib/maze/world';
 import type { Position } from '../lib/maze/types';
-import { SPELL_COLORS, type UtilityType } from '../lib/modules/utilities';
+import { SPELL_COLORS, SPELL_ICONS, type UtilityType } from '../lib/modules/utilities';
+import { advanceSpellParticles, emitSpellParticles, type SpellParticle } from '../lib/sprites/spellParticles';
 import { useSpriteLoop } from '../hooks/useSpriteLoop';
 
 interface WorldCanvasProps {
@@ -87,18 +91,120 @@ function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number 
   );
 }
 
-/** A colored, gently pulsing dot marking where a utility can be traced up — the only other spot
+/** Lightens a hex color toward white by `t` (0-1) — used to fake the ink trail's dark-to-bright
+ *  dust gradient (its hand-picked purple shades) for an arbitrary per-spell base color. */
+function tintTowardWhite(hex: string, t: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 0xff) + (255 - ((n >> 16) & 0xff)) * t);
+  const g = Math.round(((n >> 8) & 0xff) + (255 - ((n >> 8) & 0xff)) * t);
+  const b = Math.round((n & 0xff) + (255 - (n & 0xff)) * t);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+
+/** Ambient sparkle aura hovering around an uncollected pickup — the exact same dust-particle
+ *  system as the sigil-drawing ink trail in SigilCanvas (just tinted to the pickup's own spell
+ *  color instead of the trail's fixed purple), trickling out continuously rather than the
+ *  trail's per-stroke bursts, so an unclaimed spell still reads as "the same kind of magic". */
+function PickupAura({ x, y, cellSize, color }: { x: number; y: number; cellSize: number; color: string }) {
+  const particles = useSharedValue<SpellParticle[]>([]);
+  const emitAccumulator = useSharedValue(0);
+  const dustColors = useMemo(
+    () => [color, tintTowardWhite(color, 0.15), tintTowardWhite(color, 0.32), tintTowardWhite(color, 0.55)],
+    [color],
+  );
+
+  useFrameCallback(useCallback((info) => {
+    'worklet';
+    const delta = info.timeSincePreviousFrame ?? 16;
+    emitAccumulator.value += delta;
+    let next = particles.value;
+    // A slow, steady trickle — ambient, not the drawing burst's density.
+    const emitIntervalMs = 150;
+    while (emitAccumulator.value > emitIntervalMs) {
+      next = emitSpellParticles(next, x, y, 1);
+      emitAccumulator.value -= emitIntervalMs;
+    }
+    particles.value = advanceSpellParticles(next, delta);
+  }, [x, y, particles, emitAccumulator]));
+
+  // Motes drift a full cell's worth before fading, so keep them from wandering past its edge.
+  const maxDrift = cellSize * 0.45;
+  const dustPaths = useDerivedValue(() => {
+    const builders = Array.from({ length: 4 }, () => Skia.PathBuilder.Make());
+    for (const p of particles.value) {
+      const dx = Math.min(maxDrift, Math.max(-maxDrift, p.x - x));
+      const dy = Math.min(maxDrift, Math.max(-maxDrift, p.y - y));
+      const remaining = 1 - p.age / p.life;
+      const twinkle = 0.65 + 0.35 * Math.sin(p.age * 0.019 + p.phase);
+      const brightness = remaining * twinkle;
+      const bucket = Math.min(3, Math.floor(brightness * 4));
+      const pb = builders[bucket];
+      const radius = p.radius * (0.35 + 0.65 * remaining) * 0.72;
+      const px = x + dx;
+      const py = y + dy;
+      if (p.star) {
+        const r = radius * 2.4;
+        const inner = radius * 0.35;
+        pb.moveTo(px, py - r);
+        pb.lineTo(px + inner, py - inner);
+        pb.lineTo(px + r, py);
+        pb.lineTo(px + inner, py + inner);
+        pb.lineTo(px, py + r);
+        pb.lineTo(px - inner, py + inner);
+        pb.lineTo(px - r, py);
+        pb.lineTo(px - inner, py - inner);
+        pb.close();
+      } else {
+        pb.addCircle(px, py, radius);
+      }
+    }
+    return builders.map((pb) => pb.build());
+  });
+  const dust0 = useDerivedValue(() => dustPaths.value[0]);
+  const dust1 = useDerivedValue(() => dustPaths.value[1]);
+  const dust2 = useDerivedValue(() => dustPaths.value[2]);
+  const dust3 = useDerivedValue(() => dustPaths.value[3]);
+
+  return (
+    <>
+      <Path path={dust0} color={dustColors[0]} opacity={0.18} />
+      <Path path={dust1} color={dustColors[1]} opacity={0.44} />
+      <Path path={dust2} color={dustColors[2]} opacity={0.74} />
+      <Path path={dust3} color={dustColors[3]} opacity={1} />
+    </>
+  );
+}
+
+/** A gently pulsing spell icon marking where a utility can be traced up — the only other spot
  *  of color in the otherwise monochrome world besides the hero, per the art direction. */
-function PickupMarker({ x, y, cellSize, color }: { x: number; y: number; cellSize: number; color: string }) {
+function PickupMarker({ x, y, cellSize, image, color }: {
+  x: number; y: number; cellSize: number; image: SkImage | null; color: string;
+}) {
   const pulse = useSharedValue(0);
 
   useEffect(() => {
     pulse.value = withRepeat(withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.ease) }), -1, true);
   }, [pulse]);
 
-  const radius = useDerivedValue(() => cellSize * (0.16 + 0.05 * pulse.value));
+  const size = useDerivedValue(() => cellSize * (0.88 + 0.08 * pulse.value));
+  const imageX = useDerivedValue(() => x - size.value / 2);
+  const imageY = useDerivedValue(() => y - size.value / 2);
+  const opacity = useDerivedValue(() => 0.85 + 0.15 * pulse.value);
+  const haloRadius = useDerivedValue(() => cellSize * (0.36 + 0.05 * pulse.value));
+  const haloOpacity = useDerivedValue(() => 0.4 + 0.15 * pulse.value);
 
-  return <Circle cx={x} cy={y} r={radius} color={color} />;
+  return (
+    <>
+      <PickupAura x={x} y={y} cellSize={cellSize} color={color} />
+      <Circle cx={x} cy={y} r={haloRadius} color={color} opacity={haloOpacity}>
+        <BlurMask blur={8} style="normal" />
+      </Circle>
+      {image && (
+        <Image image={image} x={imageX} y={imageY} width={size} height={size}
+          fit="contain" opacity={opacity} />
+      )}
+    </>
+  );
 }
 
 const HERO_ANIMATIONS = Object.keys(HERO_SHEETS) as HeroAnimationName[];
@@ -144,11 +250,24 @@ export const WorldCanvas = memo(function WorldCanvas({
 }: WorldCanvasProps) {
   const cellSize = useMemo(() => cellSizeForWorld(world, width, height), [world, width, height]);
 
+  // Fixed set of hooks (one per spell, never conditional) so every icon is decoded once and
+  // reused across however many pickups of that type appear in the world.
+  const phaseIcon = useImage(SPELL_ICONS.phase);
+  const destroyIcon = useImage(SPELL_ICONS.destroy);
+  const scrambleIcon = useImage(SPELL_ICONS.scramble);
+  const dashIcon = useImage(SPELL_ICONS.dash);
+  const shieldIcon = useImage(SPELL_ICONS.shield);
+  const trapIcon = useImage(SPELL_ICONS.trap);
+  const spellIcons: Record<UtilityType, SkImage | null> = {
+    phase: phaseIcon, destroy: destroyIcon, scramble: scrambleIcon,
+    dash: dashIcon, shield: shieldIcon, trap: trapIcon,
+  };
+
   const currentBlock = world.blocks.find((b) => b.id === currentBlockId) ?? world.blocks[0];
   const endBlock = world.blocks[world.blocks.length - 1];
 
   const pickupMarkers = useMemo(() => {
-    const markers: { key: string; x: number; y: number; color: string }[] = [];
+    const markers: { key: string; x: number; y: number; type: UtilityType }[] = [];
     for (const [key, type] of pickups) {
       const sep = key.indexOf(':');
       const blockId = key.slice(0, sep);
@@ -159,7 +278,7 @@ export const WorldCanvas = memo(function WorldCanvas({
         key,
         x: (block.worldOffsetX + cx + 0.5) * cellSize,
         y: (block.worldOffsetY + cy + 0.5) * cellSize,
-        color: SPELL_COLORS[type],
+        type,
       });
     }
     return markers;
@@ -257,7 +376,8 @@ export const WorldCanvas = memo(function WorldCanvas({
         <ExitRadar x={exitWorldX} y={exitWorldY} cellSize={cellSize} />
 
         {pickupMarkers.map((m) => (
-          <PickupMarker key={m.key} x={m.x} y={m.y} cellSize={cellSize} color={m.color} />
+          <PickupMarker key={m.key} x={m.x} y={m.y} cellSize={cellSize}
+            image={spellIcons[m.type]} color={SPELL_COLORS[m.type]} />
         ))}
 
         {HERO_ANIMATIONS.map((name) => (

@@ -1,4 +1,4 @@
-export { SPELL_COLORS, type UtilityType } from './types';
+export { SPELL_COLORS, SPELL_ICONS, type UtilityType } from './types';
 export { SIGIL_TEMPLATES, type SigilPoint } from './sigils';
 export { recognizeSigil, type SigilMatch } from './recognizer';
 export { applyDestroy, findWallTarget, type WallTarget } from './logic';
