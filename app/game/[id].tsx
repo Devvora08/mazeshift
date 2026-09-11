@@ -9,8 +9,8 @@ import type { UtilityType } from '../../lib/modules/utilities';
 import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
 
-/** How often we retry a held joystick direction — matches WorldCanvas's MOVE_DURATION + settle buffer. */
-const MOVE_REPEAT_MS = 220;
+/** Retry only when a held direction is blocked; completed slides chain immediately. */
+const BLOCKED_RETRY_MS = 80;
 
 export default function GameScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -52,21 +52,17 @@ export default function GameScreen() {
     return () => clearInterval(interval);
   }, [checkScramble]);
 
-  // The store flips isMoving back off once the slide animation (MOVE_DURATION in WorldCanvas) settles.
-  useEffect(() => {
-    if (!isMoving) return;
-    const timeout = setTimeout(() => finishMove(), MOVE_REPEAT_MS);
-    return () => clearTimeout(timeout);
-  }, [isMoving, heroCell, finishMove]);
+  const handleMoveComplete = useCallback(() => {
+    finishMove();
+    const dir = heldDirection.current;
+    if (dir) move(dir);
+  }, [finishMove, move]);
 
-  // Repeats the held joystick direction every MOVE_REPEAT_MS. move() itself no-ops while already
-  // mid-step or if the held direction is currently wall-blocked, so this is safe to call freely —
-  // and it doubles as a retry in case a blocked direction opens up later (e.g. after a scramble).
   useEffect(() => {
     const interval = setInterval(() => {
       const dir = heldDirection.current;
-      if (dir) move(dir);
-    }, MOVE_REPEAT_MS);
+      if (dir && !useGameStore.getState().isMoving) move(dir);
+    }, BLOCKED_RETRY_MS);
     return () => clearInterval(interval);
   }, [move]);
 
@@ -130,8 +126,9 @@ export default function GameScreen() {
               world={world}
               currentBlockId={currentBlockId}
               heroCell={heroCell}
-              facing={heldDir ?? facing}
-              isHolding={heldDir !== null}
+              facing={isMoving ? facing : heldDir ?? facing}
+              isHolding={isMoving || heldDir !== null}
+              onMoveComplete={handleMoveComplete}
               pickups={pickups}
               width={canvasSize.width}
               height={canvasSize.height}

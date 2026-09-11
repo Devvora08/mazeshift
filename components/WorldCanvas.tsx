@@ -1,7 +1,8 @@
-import { Atlas, Canvas, Circle, Group, Path, Skia, rect, useImage, type SkPath } from '@shopify/react-native-skia';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Atlas, Canvas, Circle, Group, Skia, rect, useImage } from '@shopify/react-native-skia';
+import { memo, useEffect, useMemo } from 'react';
 import {
   Easing,
+  type SharedValue,
   runOnJS,
   useDerivedValue,
   useSharedValue,
@@ -9,9 +10,9 @@ import {
   withTiming,
 } from 'react-native-reanimated';
 
-import { edgeKey, posKey } from '../lib/maze/graph';
+import { BlockWalls } from './BlockWalls';
 import { HERO_SHEETS, type HeroAnimationName } from '../lib/sprites/heroFrames';
-import type { Direction, MazeBlock, MazeWorld } from '../lib/maze/world';
+import type { Direction, MazeWorld } from '../lib/maze/world';
 import type { Position } from '../lib/maze/types';
 import { SPELL_COLORS, type UtilityType } from '../lib/modules/utilities';
 import { useSpriteLoop } from '../hooks/useSpriteLoop';
@@ -25,6 +26,7 @@ interface WorldCanvasProps {
    *  intentionally NOT the same as "a single step's slide animation is in flight", which flips
    *  true/false every ~220ms during continuous movement and would flicker the sprite sheet). */
   isHolding: boolean;
+  onMoveComplete: () => void;
   /** keyed by "blockId:x,y", same shape as gameStore's pickups map. */
   pickups: Map<string, UtilityType>;
   width: number;
@@ -43,184 +45,6 @@ function cellSizeForWorld(world: MazeWorld, viewportWidth: number, viewportHeigh
   // A little breathing room so a block never touches the viewport edge.
   return Math.min(viewportWidth / (maxBlockWidth + 1), viewportHeight / (maxBlockHeight + 1));
 }
-
-/** One possible wall line segment (a cell's side). Geometry is fixed; whether it's "filled"
- *  (drawn as a wall) depends only on which maze state you check it against. */
-interface WallSlot {
-  key: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  /** null for a boundary/gateway side, which is always filled regardless of scrambling. */
-  edge: string | null;
-}
-
-function enumerateWallSlots(block: MazeBlock, openSides: ReadonlySet<string>): WallSlot[] {
-  const { maze } = block;
-  const slots: WallSlot[] = [];
-
-  for (const key of maze.activeCells) {
-    const [x, y] = key.split(',').map(Number);
-    const cell = { x, y };
-
-    const top = { x, y: y - 1 };
-    if (!openSides.has(`${x},${y}:up`)) {
-      const boundary = !maze.activeCells.has(posKey(top));
-      slots.push({ key: `${x},${y}:up`, x1: x, y1: y, x2: x + 1, y2: y, edge: boundary ? null : edgeKey(cell, top) });
-    }
-
-    const left = { x: x - 1, y };
-    if (!openSides.has(`${x},${y}:left`)) {
-      const boundary = !maze.activeCells.has(posKey(left));
-      slots.push({ key: `${x},${y}:left`, x1: x, y1: y, x2: x, y2: y + 1, edge: boundary ? null : edgeKey(cell, left) });
-    }
-
-    const right = { x: x + 1, y };
-    if (!openSides.has(`${x},${y}:right`)) {
-      const boundary = !maze.activeCells.has(posKey(right));
-      slots.push({
-        key: `${x},${y}:right`,
-        x1: x + 1,
-        y1: y,
-        x2: x + 1,
-        y2: y + 1,
-        edge: boundary ? null : edgeKey(cell, right),
-      });
-    }
-
-    const bottom = { x, y: y + 1 };
-    if (!openSides.has(`${x},${y}:down`)) {
-      const boundary = !maze.activeCells.has(posKey(bottom));
-      slots.push({
-        key: `${x},${y}:down`,
-        x1: x,
-        y1: y + 1,
-        x2: x + 1,
-        y2: y + 1,
-        edge: boundary ? null : edgeKey(cell, bottom),
-      });
-    }
-  }
-
-  return slots;
-}
-
-function isFilled(slot: WallSlot, openEdges: ReadonlySet<string>): boolean {
-  return slot.edge === null || !openEdges.has(slot.edge);
-}
-
-function pathFromSlots(slots: WallSlot[], ox: number, oy: number, cellSize: number): SkPath {
-  const pb = Skia.PathBuilder.Make();
-  for (const s of slots) {
-    pb.moveTo(ox + s.x1 * cellSize, oy + s.y1 * cellSize);
-    pb.lineTo(ox + s.x2 * cellSize, oy + s.y2 * cellSize);
-  }
-  return pb.build();
-}
-
-const SCRAMBLE_TRANSITION_MS = 380;
-
-interface WallTransition {
-  appearing: WallSlot[];
-  disappearing: WallSlot[];
-}
-
-const BlockWalls = memo(function BlockWalls({
-  block,
-  openSides,
-  cellSize,
-}: {
-  block: MazeBlock;
-  openSides: ReadonlySet<string>;
-  cellSize: number;
-}) {
-  const ox = block.worldOffsetX * cellSize;
-  const oy = block.worldOffsetY * cellSize;
-
-  // Slot geometry only depends on the block's shape/gateways, which never change after
-  // generation — activeCells keeps the same Set reference across scrambles (scrambleMaze only
-  // replaces openEdges), so this is effectively computed once per block.
-  const allSlots = useMemo(() => enumerateWallSlots(block, openSides), [block.maze.activeCells, openSides]);
-
-  // On a scramble, only the wall slots whose filled-state actually changed should animate —
-  // everything else stays perfectly still, so the player watches specific walls open/close in
-  // place instead of the whole maze blinking away and back.
-  const prevOpenEdgesRef = useRef(block.maze.openEdges);
-  const [transition, setTransition] = useState<WallTransition | null>(null);
-  const appearOpacity = useSharedValue(1);
-  const disappearOpacity = useSharedValue(1);
-
-  useEffect(() => {
-    if (prevOpenEdgesRef.current === block.maze.openEdges) return;
-    const oldEdges = prevOpenEdgesRef.current;
-    const newEdges = block.maze.openEdges;
-    prevOpenEdgesRef.current = newEdges;
-
-    const appearing = allSlots.filter((s) => !isFilled(s, oldEdges) && isFilled(s, newEdges));
-    const disappearing = allSlots.filter((s) => isFilled(s, oldEdges) && !isFilled(s, newEdges));
-    if (appearing.length === 0 && disappearing.length === 0) return;
-
-    setTransition({ appearing, disappearing });
-    disappearOpacity.value = 1;
-    disappearOpacity.value = withTiming(0, { duration: SCRAMBLE_TRANSITION_MS, easing: Easing.inOut(Easing.ease) });
-    appearOpacity.value = 0;
-    appearOpacity.value = withTiming(
-      1,
-      { duration: SCRAMBLE_TRANSITION_MS, easing: Easing.inOut(Easing.ease) },
-      (finished) => {
-        if (finished) runOnJS(setTransition)(null);
-      }
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [block.maze.openEdges, allSlots]);
-
-  const transitioningKeys = useMemo(
-    () => (transition ? new Set([...transition.appearing, ...transition.disappearing].map((s) => s.key)) : null),
-    [transition]
-  );
-
-  // Everything NOT currently mid-transition — drawn once, statically, never re-animated.
-  const staticPath = useMemo(() => {
-    const filled = allSlots.filter((s) => isFilled(s, block.maze.openEdges) && !transitioningKeys?.has(s.key));
-    return pathFromSlots(filled, ox, oy, cellSize);
-  }, [allSlots, block.maze.openEdges, transitioningKeys, ox, oy, cellSize]);
-
-  const appearingPath = useMemo(
-    () => (transition ? pathFromSlots(transition.appearing, ox, oy, cellSize) : null),
-    [transition, ox, oy, cellSize]
-  );
-  const disappearingPath = useMemo(
-    () => (transition ? pathFromSlots(transition.disappearing, ox, oy, cellSize) : null),
-    [transition, ox, oy, cellSize]
-  );
-
-  return (
-    <>
-      <Path path={staticPath} color="#111111" style="stroke" strokeWidth={2.5} strokeJoin="round" />
-      {disappearingPath && (
-        <Path
-          path={disappearingPath}
-          color="#111111"
-          style="stroke"
-          strokeWidth={2.5}
-          strokeJoin="round"
-          opacity={disappearOpacity}
-        />
-      )}
-      {appearingPath && (
-        <Path
-          path={appearingPath}
-          color="#111111"
-          style="stroke"
-          strokeWidth={2.5}
-          strokeJoin="round"
-          opacity={appearOpacity}
-        />
-      )}
-    </>
-  );
-});
 
 function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number }) {
   const progressA = useSharedValue(0);
@@ -277,12 +101,43 @@ function PickupMarker({ x, y, cellSize, color }: { x: number; y: number; cellSiz
   return <Circle cx={x} cy={y} r={radius} color={color} />;
 }
 
+const HERO_ANIMATIONS = Object.keys(HERO_SHEETS) as HeroAnimationName[];
+
+/** Keep decoded sheets mounted: an image can never use another sheet's rectangles. */
+const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, worldY }: {
+  name: HeroAnimationName;
+  active: boolean;
+  cellSize: number;
+  worldX: SharedValue<number>;
+  worldY: SharedValue<number>;
+}) {
+  const sheet = HERO_SHEETS[name];
+  const image = useImage(sheet.asset);
+  // Eight drawings take the same cycle time as five, rather than slowing the gait.
+  const fps = name === 'idle' ? IDLE_FPS : RUN_FPS * sheet.frames.length / 5;
+  const frame = useSpriteLoop(sheet.frames.length, fps);
+  const scale = cellSize * HERO_HEIGHT_IN_CELLS / sheet.frames[0].height;
+  const sprites = useDerivedValue(() => {
+    const f = sheet.frames[frame.value] ?? sheet.frames[0];
+    return [rect(f.x, f.y, f.width, f.height)];
+  });
+  const transforms = useDerivedValue(() => {
+    const f = sheet.frames[frame.value] ?? sheet.frames[0];
+    return [Skia.RSXform(scale, 0, worldX.value - f.width * scale / 2,
+      worldY.value - f.height * scale)];
+  });
+  return image ? <Group opacity={active ? 1 : 0}>
+    <Atlas image={image} sprites={sprites} transforms={transforms} />
+  </Group> : null;
+});
+
 export const WorldCanvas = memo(function WorldCanvas({
   world,
   currentBlockId,
   heroCell,
   facing,
   isHolding,
+  onMoveComplete,
   pickups,
   width,
   height,
@@ -368,39 +223,22 @@ export const WorldCanvas = memo(function WorldCanvas({
       heroWorldY.value = targetY;
       heroInitialized.value = true;
     } else {
-      heroWorldX.value = withTiming(targetX, { duration: MOVE_DURATION, easing: Easing.linear });
-      heroWorldY.value = withTiming(targetY, { duration: MOVE_DURATION, easing: Easing.linear });
+      // An unchanged axis completes immediately in Reanimated. Only the moving
+      // axis may unlock the next step, otherwise horizontal moves chain too early.
+      const movesHorizontally = targetX !== heroWorldX.value;
+      const onFinished = (finished?: boolean) => {
+        'worklet';
+        if (finished) runOnJS(onMoveComplete)();
+      };
+      heroWorldX.value = withTiming(targetX, { duration: MOVE_DURATION, easing: Easing.linear },
+        movesHorizontally ? onFinished : undefined);
+      heroWorldY.value = withTiming(targetY, { duration: MOVE_DURATION, easing: Easing.linear },
+        movesHorizontally ? undefined : onFinished);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [heroCell.x, heroCell.y, currentBlockId, cellSize]);
+  }, [heroCell.x, heroCell.y, currentBlockId, cellSize, onMoveComplete]);
 
   const animationName: HeroAnimationName = isHolding ? facing : 'idle';
-  const sheet = HERO_SHEETS[animationName];
-  const fps = animationName === 'idle' ? IDLE_FPS : RUN_FPS;
-  const frameIndexSV = useSpriteLoop(sheet.frames.length, fps);
-  // Every frame in a given sheet shares the same source height, so scale only depends on
-  // which sheet is active (idle vs a run direction) — safe to compute per-render, not per-frame.
-  const heroScale = (cellSize * HERO_HEIGHT_IN_CELLS) / sheet.frames[0].height;
-
-  const heroImage = useImage(sheet.asset);
-  // Both read frameIndexSV directly, so frame-swapping (up to 12x/sec while running) never
-  // triggers a React re-render — it stays entirely on the UI thread, same as the position tween.
-  const heroSprites = useDerivedValue(() => {
-    const f = sheet.frames[frameIndexSV.value] ?? sheet.frames[0];
-    return [rect(f.x, f.y, f.width, f.height)];
-  });
-  const heroTransforms = useDerivedValue(() => {
-    const f = sheet.frames[frameIndexSV.value] ?? sheet.frames[0];
-    return [
-      Skia.RSXform(
-        heroScale,
-        0,
-        heroWorldX.value - (f.width * heroScale) / 2,
-        heroWorldY.value - f.height * heroScale
-      ),
-    ];
-  });
-
   const exitWorldX = (endBlock.worldOffsetX + endBlock.maze.end.x + 0.5) * cellSize;
   const exitWorldY = (endBlock.worldOffsetY + endBlock.maze.end.y + 0.5) * cellSize;
 
@@ -422,9 +260,10 @@ export const WorldCanvas = memo(function WorldCanvas({
           <PickupMarker key={m.key} x={m.x} y={m.y} cellSize={cellSize} color={m.color} />
         ))}
 
-        {heroImage && (
-          <Atlas image={heroImage} sprites={heroSprites} transforms={heroTransforms} />
-        )}
+        {HERO_ANIMATIONS.map((name) => (
+          <HeroSprite key={name} name={name} active={animationName === name}
+            cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} />
+        ))}
       </Group>
     </Canvas>
   );

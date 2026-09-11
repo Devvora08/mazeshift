@@ -1,22 +1,22 @@
-import { useEffect } from 'react';
-import { useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { useCallback } from 'react';
+import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
 
-/**
- * Cycles 0..frameCount-1 on a fixed-rate interval, looping forever.
- * Writes directly to a shared value (not React state) so frame-ticking never
- * triggers a React re-render — it stays entirely on the UI thread, same as
- * the position/camera tweens it needs to stay in sync with.
- */
+/** Advance on the UI frame clock; JS work cannot delay individual sprite ticks. */
 export function useSpriteLoop(frameCount: number, fps: number): SharedValue<number> {
   const frame = useSharedValue(0);
-
-  useEffect(() => {
-    if (frameCount <= 1) return;
-    const interval = setInterval(() => {
-      frame.value = (frame.value + 1) % frameCount;
-    }, 1000 / fps);
-    return () => clearInterval(interval);
-  }, [frameCount, fps, frame]);
-
+  const elapsed = useSharedValue(0);
+  useFrameCallback(useCallback((info) => {
+    'worklet';
+    if (frameCount <= 1 || fps <= 0) {
+      frame.value = 0;
+      elapsed.value = 0;
+      return;
+    }
+    const cycleMs = frameCount * 1000 / fps;
+    // Pause across backgrounding rather than fast-forwarding through the cycle.
+    const delta = info.timeSincePreviousFrame ?? 0;
+    elapsed.value = (elapsed.value + (delta > 250 ? 0 : delta)) % cycleMs;
+    frame.value = Math.min(frameCount - 1, Math.floor(elapsed.value * fps / 1000));
+  }, [frameCount, fps, frame, elapsed]));
   return frame;
 }
