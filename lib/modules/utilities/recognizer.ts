@@ -3,9 +3,17 @@ import type { UtilityType } from './types';
 
 const RESAMPLE_POINTS = 64;
 const SQUARE_SIZE = 100;
-/** Average per-point distance (in the 100x100 normalized square) below which a match counts. */
-const MATCH_THRESHOLD = 32;
-const MIN_RAW_POINTS = 8;
+/** Curved sigils tolerate more variation than the angular, easier-to-copy marks. */
+const MATCH_THRESHOLDS: Record<UtilityType, number> = {
+  phase: 42,
+  destroy: 36,
+  scramble: 45,
+  dash: 36,
+  shield: 40,
+  trap: 44,
+};
+const MIN_RAW_POINTS = 5;
+const MIN_PATH_LENGTH = 18;
 
 function dist(a: SigilPoint, b: SigilPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -88,9 +96,15 @@ function pathDistance(a: SigilPoint[], b: SigilPoint[]): number {
   return total / a.length;
 }
 
-const NORMALIZED_TEMPLATES: Record<UtilityType, SigilPoint[]> = Object.fromEntries(
-  Object.entries(SIGIL_TEMPLATES).map(([type, points]) => [type, normalize(points)])
-) as Record<UtilityType, SigilPoint[]>;
+function rawVariants(points: SigilPoint[]): SigilPoint[][] {
+  const mirrored = points.map(p => ({ x: -p.x, y: p.y }));
+  return [points, points.slice().reverse(), mirrored, mirrored.slice().reverse()];
+}
+
+const NORMALIZED_TEMPLATE_VARIANTS: Record<UtilityType, SigilPoint[][]> = Object.fromEntries(
+  Object.entries(SIGIL_TEMPLATES).map(([type, points]) =>
+    [type, rawVariants(points).map(variant => normalize(variant))])
+) as Record<UtilityType, SigilPoint[][]>;
 
 export interface SigilMatch {
   type: UtilityType;
@@ -101,20 +115,20 @@ export interface SigilMatch {
 /** Matches a raw finger-drawn stroke against the six sigil templates. Returns null if too short
  *  or if the best match isn't close enough (probably just a tap or an unrelated scribble). */
 export function recognizeSigil(rawPoints: SigilPoint[]): SigilMatch | null {
-  if (rawPoints.length < MIN_RAW_POINTS) return null;
+  if (rawPoints.length < MIN_RAW_POINTS || pathLength(rawPoints) < MIN_PATH_LENGTH) return null;
 
   const candidate = normalize(rawPoints);
   let best: UtilityType | null = null;
   let bestDist = Infinity;
 
-  for (const type of Object.keys(NORMALIZED_TEMPLATES) as UtilityType[]) {
-    const d = pathDistance(candidate, NORMALIZED_TEMPLATES[type]);
+  for (const type of Object.keys(NORMALIZED_TEMPLATE_VARIANTS) as UtilityType[]) {
+    const d = Math.min(...NORMALIZED_TEMPLATE_VARIANTS[type].map(template => pathDistance(candidate, template)));
     if (d < bestDist) {
       bestDist = d;
       best = type;
     }
   }
 
-  if (best === null || bestDist > MATCH_THRESHOLD) return null;
-  return { type: best, confidence: 1 - bestDist / MATCH_THRESHOLD };
+  if (best === null || bestDist > MATCH_THRESHOLDS[best]) return null;
+  return { type: best, confidence: 1 - bestDist / MATCH_THRESHOLDS[best] };
 }

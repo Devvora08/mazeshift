@@ -10,7 +10,9 @@ const { scrambleMaze, eligibleEdgeCount, assertMazeIsFair } = require('../lib/ma
 const { scrambleWorld } = require('../lib/modules/scramble/logic.ts');
 const { nextStep, cellKey, distanceField, BOMB_FUSE_MS } = require('../lib/modules/monsters/navigation.ts');
 const { tickMonsters, breakWall } = require('../lib/modules/monsters/logic.ts');
-const { applyDestroy } = require('../lib/modules/utilities/logic.ts');
+const { applyDestroy, findNearestWallTarget } = require('../lib/modules/utilities/logic.ts');
+const { recognizeSigil } = require('../lib/modules/utilities/recognizer.ts');
+const { SIGIL_TEMPLATES } = require('../lib/modules/utilities/sigils.ts');
 const { triggerTraps } = require('../lib/modules/utilities/effects.ts');
 const { useGameStore: store } = require('../store/gameStore.ts');
 const state = () => store.getState();
@@ -26,6 +28,20 @@ function completeStep() {
   advance(Math.max(0, t.startedAt + t.duration - state().simulationTime));
   state().finishMove();
 }
+
+test('sigils recognize anywhere on the canvas, in reverse, and with sparse input', () => {
+  for (const [type, template] of Object.entries(SIGIL_TEMPLATES)) {
+    const sparse = template.filter((_, i) => i % 3 === 0).map(p => ({ x: p.x * 1.7 + 240, y: p.y * 0.8 + 90 }));
+    assert.equal(recognizeSigil(sparse)?.type, type);
+    assert.equal(recognizeSigil(sparse.slice().reverse())?.type, type);
+  }
+});
+
+test('wall spells choose the nearest adjacent wall without using stroke position', () => {
+  const world = fixture(3, 3, true), block = world.blocks[0], cell = { x: 1, y: 1 };
+  block.maze.openEdges.delete(edgeKey(cell, { x: 1, y: 0 }));
+  assert.deepEqual(findNearestWallTarget(block, cell, 'right').neighbor, { x: 1, y: 0 });
+});
 
 test('direct pursuit reduces displacement and Brute bombs repeatedly despite open detours', () => {
   const world = fixture(5, 3);

@@ -20,6 +20,22 @@ export function findWallTarget(block: MazeBlock, cell: Position, dir: Direction)
   return { edge, neighbor };
 }
 
+/** Find an adjacent interior wall without using stroke coordinates. The hero's
+ * facing side wins, followed by the two side walls and then the wall behind. */
+export function findNearestWallTarget(block: MazeBlock, cell: Position, facing: Direction): WallTarget | null {
+  const order: Record<Direction, Direction[]> = {
+    up: ['up', 'left', 'right', 'down'],
+    right: ['right', 'up', 'down', 'left'],
+    down: ['down', 'right', 'left', 'up'],
+    left: ['left', 'down', 'up', 'right'],
+  };
+  for (const direction of order[facing]) {
+    const target = findWallTarget(block, cell, direction);
+    if (target) return target;
+  }
+  return null;
+}
+
 /** Permanently opens the targeted wall — same "open an edge" operation scrambleMaze uses, so it's
  *  always safe (adding a passage never disconnects the maze). */
 export function applyDestroy(maze: Maze, target: WallTarget): Maze {

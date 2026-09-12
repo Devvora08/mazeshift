@@ -44,14 +44,13 @@ function BombEffect({ monster, world, cellSize, paused }: {
 }
 
 /** Four decoded images stay paired with their own frame tables; a single UI clock
- * drives the five-frame gait, and the step duration is identical for every species.
+ * drives the active gait, and every frame count uses the same overall cycle time.
  */
 export const MonsterSprite = memo(function MonsterSprite({ monster, world, cellSize, paused }: {
   monster: Monster; world: MazeWorld; cellSize: number; paused: boolean;
 }) {
   const initial = worldPoint(world, monster.location, cellSize);
   const x = useSharedValue(initial.x), y = useSharedValue(initial.y);
-  const frame = useSpriteLoop(5, !paused && monster.travel ? 10 : 0);
   // Decode each direction once, but submit only the active sheet to Skia. Previously
   // four Atlas nodes were drawn per monster every frame, three at zero opacity.
   const sheets = MONSTER_SHEETS[monster.type];
@@ -61,13 +60,15 @@ export const MonsterSprite = memo(function MonsterSprite({ monster, world, cellS
   const rightImage = useImage(sheets.right.asset);
   const image = { up: upImage, down: downImage, left: leftImage, right: rightImage }[monster.facing];
   const sheet = sheets[monster.facing];
-  const scale = cellSize * HEIGHT[monster.type] / sheet.frames[0].height;
+  const frame = useSpriteLoop(sheet.frames.length,
+    !paused && monster.travel ? 10 * sheet.frames.length / 5 : 0);
   const sprites = useDerivedValue(() => {
     const f = sheet.frames[frame.value] ?? sheet.frames[0];
     return [rect(f.x, f.y, f.width, f.height)];
   });
   const transforms = useDerivedValue(() => {
     const f = sheet.frames[frame.value] ?? sheet.frames[0];
+    const scale = cellSize * HEIGHT[monster.type] * (sheet.sizeMultiplier ?? 1) / f.height;
     return [Skia.RSXform(scale, 0, x.value - f.width * scale / 2, y.value - f.height * scale)];
   });
   const travel = monster.travel;

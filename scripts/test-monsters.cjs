@@ -37,7 +37,7 @@ function monster(type, location, id = type) {
 }
 function travel(from, to, startedAt = 0, duration = 400) { return { from, to, startedAt, duration }; }
 
-test('16 sheets: exact PNG dimensions, five nonoverlapping bounded crops, fixed cycle height', () => {
+test('16 five-frame sheets: exact PNG dimensions, nonoverlapping bounded crops, fixed cycle height', () => {
   for (const directions of Object.values(MONSTER_SHEETS)) for (const sheet of Object.values(directions)) {
     const png = fs.readFileSync(sheet.asset);
     assert.equal(png.readUInt32BE(16), sheet.imageWidth);
@@ -51,6 +51,16 @@ test('16 sheets: exact PNG dimensions, five nonoverlapping bounded crops, fixed 
       if (i) assert(sheet.frames[i - 1].x + sheet.frames[i - 1].width <= f.x);
     }
   }
+  assert.equal(MONSTER_SHEETS.hunter.left.frames.length, 5);
+  assert.equal(MONSTER_SHEETS.hunter.right.frames.length, 5);
+  assert.equal(MONSTER_SHEETS.stalker.left.frames.length, 5);
+  assert.equal(MONSTER_SHEETS.stalker.right.frames.length, 5);
+  assert.equal(MONSTER_SHEETS.brute.left.frames.length, 5);
+  assert.equal(MONSTER_SHEETS.brute.right.frames.length, 5);
+  assert.equal(MONSTER_SHEETS.hunter.left.sizeMultiplier, 1.2);
+  assert.equal(MONSTER_SHEETS.hunter.right.sizeMultiplier, 1.2);
+  assert.equal(MONSTER_SHEETS.stalker.left.sizeMultiplier, 1.2);
+  assert.equal(MONSTER_SHEETS.stalker.right.sizeMultiplier, 1.2);
 });
 
 test('walkers detour; Ghost and Brute choose direct pursuit through walls', () => {

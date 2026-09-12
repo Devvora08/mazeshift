@@ -8,7 +8,7 @@ import { createRng, type Rng } from '../lib/maze/rng';
 import type { Position } from '../lib/maze/types';
 import { DIRECTION_DELTAS, generateWorld, type Direction, type MazeWorld } from '../lib/maze/world';
 import { scheduleNextScramble, tickScramble, scrambleWorld } from '../lib/modules/scramble';
-import { applyDestroy, findWallTarget, type UtilityType } from '../lib/modules/utilities';
+import { applyDestroy, findNearestWallTarget, type UtilityType } from '../lib/modules/utilities';
 import { spawnMonsters, tickMonsters, touches, type Monster, type Travel, type WorldCell } from '../lib/modules/monsters';
 
 import { campaignPickups } from '../lib/levels/pickups';
@@ -65,8 +65,8 @@ interface GameState {
   move: (dir: Direction) => boolean;
   /** UI calls this once the move's slide animation finishes, unblocking the next input. */
   finishMove: () => void;
-  /** A sigil was recognized from a drawn stroke — acquire it if standing on a matching pickup,
-   *  otherwise try to cast it from inventory. */
+  /** A location-independent sigil was recognized — acquire it if the hero stands on the
+   *  matching pickup, otherwise cast it from inventory using only the hero's state. */
   castSigil: (type: UtilityType) => void;
 }
 
@@ -295,7 +295,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       say('Dash!'); return;
     }
 
-    const target = findWallTarget(block, heroCell, facing);
+    const target = findNearestWallTarget(block, heroCell, facing);
     if (!target) { say('No wall there'); return; }
     if (type === 'destroy') {
       const blocks = world.blocks.slice();
