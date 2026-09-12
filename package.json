@@ -37,7 +37,8 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "test:monsters": "node scripts/test-monsters.cjs"
+    "test:monsters": "node scripts/test-monsters.cjs",
+    "test:gameplay": "node scripts/test-gameplay.cjs"
   },
   "private": true
 }

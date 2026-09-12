@@ -25,5 +25,7 @@ export function findWallTarget(block: MazeBlock, cell: Position, dir: Direction)
 export function applyDestroy(maze: Maze, target: WallTarget): Maze {
   const openEdges = new Set(maze.openEdges);
   openEdges.add(target.edge);
-  return { ...maze, openEdges };
+  const destroyedEdges = new Set(maze.destroyedEdges);
+  destroyedEdges.add(target.edge);
+  return { ...maze, openEdges, destroyedEdges };
 }

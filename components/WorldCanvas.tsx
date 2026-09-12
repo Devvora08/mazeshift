@@ -1,28 +1,27 @@
 import {
-  Atlas, BlurMask, Canvas, Circle, Group, Image, Path, type SkImage, Skia, rect, useImage,
+  Atlas, Canvas, Circle, Group, Image, type SkImage, Skia, rect, useImage,
 } from '@shopify/react-native-skia';
-import { memo, useCallback, useEffect, useMemo } from 'react';
+import { memo, useEffect, useMemo } from 'react';
+import { View, StyleSheet } from 'react-native';
 import {
   Easing,
   cancelAnimation,
   type SharedValue,
   runOnJS,
   useDerivedValue,
-  useFrameCallback,
   useSharedValue,
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
 
 import { BlockWalls } from './BlockWalls';
-import { MonsterSprite } from './MonsterSprite';
-import type { Monster } from '../lib/modules/monsters';
+import { MonsterLayer } from './MonsterLayer';
+import type { PlacedTrap } from '../lib/modules/utilities/effects';
 import { HERO_STEP_MS, useGameStore } from '../store/gameStore';
 import { HERO_SHEETS, type HeroAnimationName } from '../lib/sprites/heroFrames';
 import type { Direction, MazeWorld } from '../lib/maze/world';
 import type { Position } from '../lib/maze/types';
 import { SPELL_COLORS, SPELL_ICONS, type UtilityType } from '../lib/modules/utilities';
-import { advanceSpellParticles, emitSpellParticles, type SpellParticle } from '../lib/sprites/spellParticles';
 import { useSpriteLoop } from '../hooks/useSpriteLoop';
 
 interface WorldCanvasProps {
@@ -37,7 +36,10 @@ interface WorldCanvasProps {
   onMoveComplete: () => void;
   /** keyed by "blockId:x,y", same shape as gameStore's pickups map. */
   pickups: Map<string, UtilityType>;
-  monsters: Monster[];
+  allowedUtilities: UtilityType[];
+  traps: PlacedTrap[];
+  shieldActive: boolean;
+  dashActive: boolean;
   paused: boolean;
   width: number;
   height: number;
@@ -56,7 +58,7 @@ function cellSizeForWorld(world: MazeWorld, viewportWidth: number, viewportHeigh
   return Math.min(viewportWidth / (maxBlockWidth + 1), viewportHeight / (maxBlockHeight + 1));
 }
 
-function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number }) {
+const ExitRadar = memo(function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number }) {
   const progressA = useSharedValue(0);
   const progressB = useSharedValue(0);
   const progressC = useSharedValue(0);
@@ -95,96 +97,12 @@ function ExitRadar({ x, y, cellSize }: { x: number; y: number; cellSize: number 
       <Circle cx={x} cy={y} r={cellSize * 0.16} color="#111111" />
     </>
   );
-}
-
-/** Lightens a hex color toward white by `t` (0-1) — used to fake the ink trail's dark-to-bright
- *  dust gradient (its hand-picked purple shades) for an arbitrary per-spell base color. */
-function tintTowardWhite(hex: string, t: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.round(((n >> 16) & 0xff) + (255 - ((n >> 16) & 0xff)) * t);
-  const g = Math.round(((n >> 8) & 0xff) + (255 - ((n >> 8) & 0xff)) * t);
-  const b = Math.round((n & 0xff) + (255 - (n & 0xff)) * t);
-  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
-}
-
-/** Ambient sparkle aura hovering around an uncollected pickup — the exact same dust-particle
- *  system as the sigil-drawing ink trail in SigilCanvas (just tinted to the pickup's own spell
- *  color instead of the trail's fixed purple), trickling out continuously rather than the
- *  trail's per-stroke bursts, so an unclaimed spell still reads as "the same kind of magic". */
-function PickupAura({ x, y, cellSize, color }: { x: number; y: number; cellSize: number; color: string }) {
-  const particles = useSharedValue<SpellParticle[]>([]);
-  const emitAccumulator = useSharedValue(0);
-  const dustColors = useMemo(
-    () => [color, tintTowardWhite(color, 0.15), tintTowardWhite(color, 0.32), tintTowardWhite(color, 0.55)],
-    [color],
-  );
-
-  useFrameCallback(useCallback((info) => {
-    'worklet';
-    const delta = info.timeSincePreviousFrame ?? 16;
-    emitAccumulator.value += delta;
-    let next = particles.value;
-    // A slow, steady trickle — ambient, not the drawing burst's density.
-    const emitIntervalMs = 150;
-    while (emitAccumulator.value > emitIntervalMs) {
-      next = emitSpellParticles(next, x, y, 1);
-      emitAccumulator.value -= emitIntervalMs;
-    }
-    particles.value = advanceSpellParticles(next, delta);
-  }, [x, y, particles, emitAccumulator]));
-
-  // Motes drift a full cell's worth before fading, so keep them from wandering past its edge.
-  const maxDrift = cellSize * 0.45;
-  const dustPaths = useDerivedValue(() => {
-    const builders = Array.from({ length: 4 }, () => Skia.PathBuilder.Make());
-    for (const p of particles.value) {
-      const dx = Math.min(maxDrift, Math.max(-maxDrift, p.x - x));
-      const dy = Math.min(maxDrift, Math.max(-maxDrift, p.y - y));
-      const remaining = 1 - p.age / p.life;
-      const twinkle = 0.65 + 0.35 * Math.sin(p.age * 0.019 + p.phase);
-      const brightness = remaining * twinkle;
-      const bucket = Math.min(3, Math.floor(brightness * 4));
-      const pb = builders[bucket];
-      const radius = p.radius * (0.35 + 0.65 * remaining) * 0.72;
-      const px = x + dx;
-      const py = y + dy;
-      if (p.star) {
-        const r = radius * 2.4;
-        const inner = radius * 0.35;
-        pb.moveTo(px, py - r);
-        pb.lineTo(px + inner, py - inner);
-        pb.lineTo(px + r, py);
-        pb.lineTo(px + inner, py + inner);
-        pb.lineTo(px, py + r);
-        pb.lineTo(px - inner, py + inner);
-        pb.lineTo(px - r, py);
-        pb.lineTo(px - inner, py - inner);
-        pb.close();
-      } else {
-        pb.addCircle(px, py, radius);
-      }
-    }
-    return builders.map((pb) => pb.build());
-  });
-  const dust0 = useDerivedValue(() => dustPaths.value[0]);
-  const dust1 = useDerivedValue(() => dustPaths.value[1]);
-  const dust2 = useDerivedValue(() => dustPaths.value[2]);
-  const dust3 = useDerivedValue(() => dustPaths.value[3]);
-
-  return (
-    <>
-      <Path path={dust0} color={dustColors[0]} opacity={0.18} />
-      <Path path={dust1} color={dustColors[1]} opacity={0.44} />
-      <Path path={dust2} color={dustColors[2]} opacity={0.74} />
-      <Path path={dust3} color={dustColors[3]} opacity={1} />
-    </>
-  );
-}
+});
 
 /** A gently pulsing spell icon marking where a utility can be traced up — the only other spot
  *  of color in the otherwise monochrome world besides the hero, per the art direction. */
-function PickupMarker({ x, y, cellSize, image, color }: {
-  x: number; y: number; cellSize: number; image: SkImage | null; color: string;
+const PickupMarker = memo(function PickupMarker({ x, y, cellSize, image, color, ambient }: {
+  x: number; y: number; cellSize: number; image: SkImage | null; color: string; ambient: boolean;
 }) {
   const pulse = useSharedValue(0);
 
@@ -201,31 +119,32 @@ function PickupMarker({ x, y, cellSize, image, color }: {
 
   return (
     <>
-      <PickupAura x={x} y={y} cellSize={cellSize} color={color} />
-      <Circle cx={x} cy={y} r={haloRadius} color={color} opacity={haloOpacity}>
-        <BlurMask blur={8} style="normal" />
-      </Circle>
+      <Circle cx={x} cy={y} r={haloRadius} color={color} opacity={haloOpacity} />
+      {ambient && <Circle cx={x + cellSize * 0.35} cy={y - cellSize * 0.35}
+        r={cellSize * 0.06} color={color} opacity={opacity} />}
       {image && (
         <Image image={image} x={imageX} y={imageY} width={size} height={size}
           fit="contain" opacity={opacity} />
       )}
     </>
   );
-}
-
-const HERO_ANIMATIONS = Object.keys(HERO_SHEETS) as HeroAnimationName[];
+});
 
 /** Keep decoded sheets mounted: an image can never use another sheet's rectangles. */
-const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, worldY, paused }: {
+const HeroSprite = memo(function HeroSprite({ name, cellSize, worldX, worldY, paused }: {
   name: HeroAnimationName;
-  active: boolean;
   paused: boolean;
   cellSize: number;
   worldX: SharedValue<number>;
   worldY: SharedValue<number>;
 }) {
   const sheet = HERO_SHEETS[name];
-  const image = useImage(sheet.asset);
+  const idle = useImage(HERO_SHEETS.idle.asset);
+  const up = useImage(HERO_SHEETS.up.asset);
+  const down = useImage(HERO_SHEETS.down.asset);
+  const left = useImage(HERO_SHEETS.left.asset);
+  const right = useImage(HERO_SHEETS.right.asset);
+  const image = { idle, up, down, left, right }[name];
   // Eight drawings take the same cycle time as five, rather than slowing the gait.
   const fps = name === 'idle' ? IDLE_FPS : RUN_FPS * sheet.frames.length / 5;
   const frame = useSpriteLoop(sheet.frames.length, paused ? 0 : fps);
@@ -239,9 +158,7 @@ const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, wo
     return [Skia.RSXform(scale, 0, worldX.value - f.width * scale / 2,
       worldY.value - f.height * scale)];
   });
-  return image ? <Group opacity={active ? 1 : 0}>
-    <Atlas image={image} sprites={sprites} transforms={transforms} />
-  </Group> : null;
+  return image ? <Atlas image={image} sprites={sprites} transforms={transforms} /> : null;
 });
 
 export const WorldCanvas = memo(function WorldCanvas({
@@ -252,7 +169,10 @@ export const WorldCanvas = memo(function WorldCanvas({
   isHolding,
   onMoveComplete,
   pickups,
-  monsters,
+  allowedUtilities,
+  traps,
+  shieldActive,
+  dashActive,
   paused,
   width,
   height,
@@ -261,12 +181,13 @@ export const WorldCanvas = memo(function WorldCanvas({
 
   // Fixed set of hooks (one per spell, never conditional) so every icon is decoded once and
   // reused across however many pickups of that type appear in the world.
-  const phaseIcon = useImage(SPELL_ICONS.phase);
-  const destroyIcon = useImage(SPELL_ICONS.destroy);
-  const scrambleIcon = useImage(SPELL_ICONS.scramble);
-  const dashIcon = useImage(SPELL_ICONS.dash);
-  const shieldIcon = useImage(SPELL_ICONS.shield);
-  const trapIcon = useImage(SPELL_ICONS.trap);
+  const allowedSet = useMemo(() => new Set(allowedUtilities), [allowedUtilities]);
+  const phaseIcon = useImage(allowedSet.has('phase') ? SPELL_ICONS.phase : null);
+  const destroyIcon = useImage(allowedSet.has('destroy') ? SPELL_ICONS.destroy : null);
+  const scrambleIcon = useImage(allowedSet.has('scramble') ? SPELL_ICONS.scramble : null);
+  const dashIcon = useImage(allowedSet.has('dash') ? SPELL_ICONS.dash : null);
+  const shieldIcon = useImage(allowedSet.has('shield') ? SPELL_ICONS.shield : null);
+  const trapIcon = useImage(allowedSet.has('trap') ? SPELL_ICONS.trap : null);
   const spellIcons: Record<UtilityType, SkImage | null> = {
     phase: phaseIcon, destroy: destroyIcon, scramble: scrambleIcon,
     dash: dashIcon, shield: shieldIcon, trap: trapIcon,
@@ -275,11 +196,17 @@ export const WorldCanvas = memo(function WorldCanvas({
   const currentBlock = world.blocks.find((b) => b.id === currentBlockId) ?? world.blocks[0];
   const endBlock = world.blocks[world.blocks.length - 1];
 
+  const nearbyBlockIds = useMemo(() => new Set([
+    currentBlockId,
+    ...(world.gatewaysByBlock.get(currentBlockId) ?? []).map(g => g.toBlockId),
+  ]), [currentBlockId, world]);
+
   const pickupMarkers = useMemo(() => {
     const markers: { key: string; x: number; y: number; type: UtilityType }[] = [];
     for (const [key, type] of pickups) {
       const sep = key.indexOf(':');
       const blockId = key.slice(0, sep);
+      if (!nearbyBlockIds.has(blockId)) continue;
       const [cx, cy] = key.slice(sep + 1).split(',').map(Number);
       const block = world.blocks.find((b) => b.id === blockId);
       if (!block) continue;
@@ -291,7 +218,7 @@ export const WorldCanvas = memo(function WorldCanvas({
       });
     }
     return markers;
-  }, [pickups, world, cellSize]);
+  }, [pickups, world, cellSize, nearbyBlockIds]);
 
   // Gateway "open side" lookups per block, computed once per world (never changes after
   // generation) rather than rebuilt inline every render — that rebuild was invalidating every
@@ -375,18 +302,21 @@ export const WorldCanvas = memo(function WorldCanvas({
   }, [heroCell.x, heroCell.y, currentBlockId, cellSize, onMoveComplete, paused]);
 
   const animationName: HeroAnimationName = isHolding ? facing : 'idle';
+  const auraY = useDerivedValue(() => heroWorldY.value - cellSize * 0.8);
   const exitWorldX = (endBlock.worldOffsetX + endBlock.maze.end.x + 0.5) * cellSize;
   const exitWorldY = (endBlock.worldOffsetY + endBlock.maze.end.y + 0.5) * cellSize;
 
   return (
-    <Canvas style={{ width, height }}>
+    <View style={{ width, height }}>
+    <Canvas style={StyleSheet.absoluteFill}>
       <Group transform={cameraTransform}>
-        {world.blocks.map((block) => (
+        {world.blocks.filter(block => nearbyBlockIds.has(block.id)).map((block) => (
           <BlockWalls
             key={block.id}
             block={block}
             openSides={openSidesByBlock.get(block.id) ?? new Set()}
             cellSize={cellSize}
+            animate={block.id === currentBlockId}
           />
         ))}
 
@@ -394,17 +324,35 @@ export const WorldCanvas = memo(function WorldCanvas({
 
         {pickupMarkers.map((m) => (
           <PickupMarker key={m.key} x={m.x} y={m.y} cellSize={cellSize}
-            image={spellIcons[m.type]} color={SPELL_COLORS[m.type]} />
+            image={spellIcons[m.type]} color={SPELL_COLORS[m.type]}
+            ambient={m.key.startsWith(`${currentBlockId}:`)} />
         ))}
 
-        {monsters.map(monster => <MonsterSprite key={monster.id} monster={monster}
-          world={world} cellSize={cellSize} paused={paused} />)}
 
-        {HERO_ANIMATIONS.map((name) => (
-          <HeroSprite key={name} name={name} active={animationName === name}
-            cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} paused={paused} />
-        ))}
+        {traps.map(trap => {
+          const block = world.blocks.find(b => b.id === trap.location.blockId)!;
+          const x = (block.worldOffsetX + trap.location.cell.x + 0.5) * cellSize;
+          const y = (block.worldOffsetY + trap.location.cell.y + 0.5) * cellSize;
+          return <Group key={trap.id}>
+            <Circle cx={x} cy={y} r={cellSize * 0.42} color="#ef4444" style="stroke" strokeWidth={2} />
+            {trapIcon && <Image image={trapIcon} x={x-cellSize*0.3} y={y-cellSize*0.3}
+              width={cellSize*0.6} height={cellSize*0.6} fit="contain" />}
+          </Group>;
+        })}
+
+        {shieldActive && <>
+          <Circle cx={heroWorldX} cy={auraY} r={cellSize * 0.85} color="#38bdf8" opacity={0.16} />
+          <Circle cx={heroWorldX} cy={auraY} r={cellSize * 0.85} color="#38bdf8" style="stroke" strokeWidth={2.5} />
+        </>}
+        {dashActive && <Circle cx={heroWorldX} cy={auraY} r={cellSize * 0.65}
+          color="#facc15" style="stroke" strokeWidth={3} opacity={0.8} />}
+
+        <HeroSprite name={animationName}
+          cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} paused={paused} />
       </Group>
     </Canvas>
+    <MonsterLayer world={world} currentBlockId={currentBlockId} cellSize={cellSize}
+      cameraTransform={cameraTransform} paused={paused} />
+    </View>
   );
 });

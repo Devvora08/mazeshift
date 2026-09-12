@@ -3,13 +3,16 @@ import { create } from 'zustand';
 import { getLevel } from '../lib/levels/data';
 import { PRACTICE_LEVEL, practicePickups } from '../lib/levels/practice';
 import type { LevelConfig } from '../lib/levels/types';
-import { edgeKey, isReachable, posKey } from '../lib/maze/graph';
+import { edgeKey, posKey } from '../lib/maze/graph';
 import { createRng, type Rng } from '../lib/maze/rng';
 import type { Position } from '../lib/maze/types';
 import { DIRECTION_DELTAS, generateWorld, type Direction, type MazeWorld } from '../lib/maze/world';
-import { scheduleNextScramble, tickScramble } from '../lib/modules/scramble';
+import { scheduleNextScramble, tickScramble, scrambleWorld } from '../lib/modules/scramble';
 import { applyDestroy, findWallTarget, type UtilityType } from '../lib/modules/utilities';
 import { spawnMonsters, tickMonsters, touches, type Monster, type Travel, type WorldCell } from '../lib/modules/monsters';
+
+import { campaignPickups } from '../lib/levels/pickups';
+import { DASH_STEPS, DASH_STEP_MS, SHIELD_MS, TRAP_LIFETIME_MS, triggerTraps, type PlacedTrap } from '../lib/modules/utilities/effects';
 
 export const HERO_STEP_MS = 200;
 
@@ -46,6 +49,10 @@ interface GameState {
   tick: (deltaMs: number) => void;
   setPaused: (paused: boolean) => void;
 
+  shieldUntil: number;
+  traps: PlacedTrap[];
+  dashRemaining: number;
+  dashDirection: Direction | null;
   inventory: UtilityType[];
   /** keyed by "blockId:x,y" — cleared as each is picked up. */
   pickups: Map<string, UtilityType>;
@@ -82,7 +89,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   paused: false,
   pausedAt: null,
   runId: 0,
-  inventory: [],
+  shieldUntil: 0, traps: [], dashRemaining: 0, dashDirection: null,
+    inventory: [],
   pickups: new Map(),
   feedback: null,
 
@@ -97,7 +105,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       ? scheduleNextScramble(level.scramble, rng, Date.now())
       : null;
 
-    const pickups = new Map<string, UtilityType>();
+    const monsters = spawnMonsters(world, level.monsters);
+    const pickups = id === 0 ? new Map<string, UtilityType>() : campaignPickups(world, level.utilities, monsters);
     if (id === 0) {
       for (const p of practicePickups(startBlock.maze)) {
         pickups.set(pickupKey(startBlock.id, p.cell), p.type);
@@ -115,7 +124,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       nextScrambleAt,
       scrambleFlashUntil: null,
       reachedExit: false,
-      monsters: spawnMonsters(world, level.monsters),
+      monsters,
       simulationTime: 0,
       heroTravel: null,
       caughtBy: null,
@@ -123,7 +132,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       paused: false,
       pausedAt: null,
       runId: get().runId + 1,
-      inventory: [],
+      shieldUntil: 0, traps: [], dashRemaining: 0, dashDirection: null,
+    inventory: [],
       pickups,
       feedback: null,
     });
@@ -132,8 +142,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   move: (dir) => {
     const { world, level, currentBlockId, heroCell, isMoving, rng } = get();
     if (!world || !level || !currentBlockId || !heroCell || !rng || isMoving || get().caughtBy || get().paused || get().reachedExit) return false;
+    if (get().dashRemaining > 0 && dir !== get().dashDirection) return false;
     const from = { blockId: currentBlockId, cell: heroCell };
-    const travelTo = (to: WorldCell): Travel => ({ from, to, startedAt: get().simulationTime, duration: HERO_STEP_MS });
+    const travelTo = (to: WorldCell): Travel => ({ from, to, startedAt: get().simulationTime, duration: get().dashRemaining > 0 ? DASH_STEP_MS : HERO_STEP_MS });
 
     const block = world.blocks.find((b) => b.id === currentBlockId);
     if (!block) return false;
@@ -143,7 +154,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     // 1. A normal step within the current block's maze.
     if (block.maze.activeCells.has(posKey(target)) && block.maze.openEdges.has(edgeKey(heroCell, target))) {
-      set({ heroCell: target, facing: dir, isMoving: true, heroTravel: travelTo({ blockId: currentBlockId, cell: target }) });
+      set({ heroCell: target, facing: dir, isMoving: true, dashRemaining: Math.max(0, get().dashRemaining - 1), heroTravel: travelTo({ blockId: currentBlockId, cell: target }) });
       return true;
     }
 
@@ -151,17 +162,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     const gateways = world.gatewaysByBlock.get(currentBlockId) ?? [];
     const gateway = gateways.find((g) => g.direction === dir && posKey(g.fromCell) === posKey(heroCell));
     if (gateway) {
-      const nextScrambleAt = level.scramble.enabled
-        ? scheduleNextScramble(level.scramble, rng, Date.now())
-        : null;
       set({
         currentBlockId: gateway.toBlockId,
         heroCell: gateway.toCell,
         facing: dir,
         isMoving: true,
         heroTravel: travelTo({ blockId: gateway.toBlockId, cell: gateway.toCell }),
-        nextScrambleAt,
-        scrambleFlashUntil: null,
+        dashRemaining: Math.max(0, get().dashRemaining - 1),
       });
       return true;
     }
@@ -172,16 +179,26 @@ export const useGameStore = create<GameState>((set, get) => ({
   finishMove: () => {
     const state = get();
     if (state.paused || state.caughtBy) return;
-    // Contact is resolved by the simulation before a completion may grant a win.
     if (state.heroTravel && state.heroCell && state.currentBlockId) {
       const through = Math.max(state.simulationTime, state.heroTravel.startedAt + state.heroTravel.duration);
       const hero = { blockId: state.currentBlockId, cell: state.heroCell };
-      const caught = state.monsters.find(m => touches(hero, state.heroTravel, m.location, m.travel, state.simulationTime, through));
-      if (caught) { set({ caughtBy: caught.type, isMoving: false, stalkerAlert: false }); return; }
+      const trapped = triggerTraps(state.monsters, state.traps, state.simulationTime, through);
+      set({ monsters: trapped.monsters, traps: trapped.traps });
+      const caught = trapped.monsters.find(m => {
+        const start = Math.max(state.simulationTime, state.shieldUntil, m.stunnedUntil ?? 0);
+        return start <= through && touches(hero, state.heroTravel, m.location, m.travel, start, through);
+      });
+      if (caught) { set({ caughtBy: caught.type, isMoving: false, stalkerAlert: false, dashRemaining: 0, dashDirection: null }); return; }
     }
     const end = state.world?.blocks.find(b => b.id === state.world!.endBlockId);
-    set({ isMoving: false, heroTravel: null, reachedExit: !!end && state.currentBlockId === end.id
-      && !!state.heroCell && posKey(state.heroCell) === posKey(end.maze.end) });
+    const reachedExit = !!end && state.currentBlockId === end.id && !!state.heroCell && posKey(state.heroCell) === posKey(end.maze.end);
+    set({ isMoving: false, heroTravel: null, reachedExit,
+      dashRemaining: reachedExit ? 0 : state.dashRemaining,
+      dashDirection: !reachedExit && state.dashRemaining > 0 ? state.dashDirection : null });
+    // Dash chains legal individual steps, so walls, gateways and contacts all apply.
+    if (!reachedExit && state.dashRemaining > 0 && state.dashDirection && !get().move(state.dashDirection)) {
+      set({ dashRemaining: 0, dashDirection: null });
+    }
   },
 
   setPaused: (paused) => {
@@ -197,113 +214,98 @@ export const useGameStore = create<GameState>((set, get) => ({
     const s = get();
     if (!s.world || !s.heroCell || !s.currentBlockId || s.paused || s.caughtBy || s.reachedExit) return;
     // Small bounded ticks; background time is discarded by the screen lifecycle.
-    const now = s.simulationTime + Math.max(0, Math.min(deltaMs, 50));
+    const now = s.simulationTime + Math.max(0, Math.min(deltaMs, 100));
     const hero = { blockId: s.currentBlockId, cell: s.heroCell };
-    const caught = s.monsters.find(m => touches(hero, s.heroTravel, m.location, m.travel, s.simulationTime, now));
+    const trapped = triggerTraps(s.monsters, s.traps, s.simulationTime, now);
+    const caught = trapped.monsters.find(m => {
+      const start = Math.max(s.simulationTime, s.shieldUntil, m.stunnedUntil ?? 0);
+      return start <= now && touches(hero, s.heroTravel, m.location, m.travel, start, now);
+    });
     if (caught) {
-      set({ simulationTime: now, caughtBy: caught.type, isMoving: false, stalkerAlert: false });
+      set({ simulationTime: now, monsters: trapped.monsters, traps: trapped.traps,
+        caughtBy: caught.type, isMoving: false, stalkerAlert: false, dashRemaining: 0, dashDirection: null });
       return;
     }
     const sensedHero = s.heroTravel && now < s.heroTravel.startedAt + s.heroTravel.duration / 2 ? s.heroTravel.from : hero;
-    const result = tickMonsters(s.world, s.monsters, sensedHero, now);
-    set({ simulationTime: now, world: result.world, monsters: result.monsters, stalkerAlert: result.alert });
+    const result = tickMonsters(s.world, trapped.monsters, sensedHero, now);
+    set({ simulationTime: now, world: result.world, monsters: result.monsters, traps: trapped.traps, stalkerAlert: result.alert });
   },
 
   checkScramble: (now) => {
-    const { level, world, currentBlockId, rng, nextScrambleAt } = get();
-    if (!level || !world || !currentBlockId || !rng || get().paused || get().caughtBy || get().reachedExit) return;
-
-    const blockIndex = world.blocks.findIndex((b) => b.id === currentBlockId);
-    if (blockIndex === -1) return;
-    const block = world.blocks[blockIndex];
-
-    const result = tickScramble({ config: level.scramble, block, rng, now, nextScrambleAt });
+    const s = get();
+    if (!s.level || !s.world || !s.rng || s.paused || s.caughtBy || s.reachedExit) return;
+    const result = tickScramble({ config: s.level.scramble, world: s.world, rng: s.rng, now,
+      nextScrambleAt: s.nextScrambleAt, travels: [s.heroTravel, ...s.monsters.map(m => m.travel)] });
     if (result.type === 'idle' || result.type === 'notDue') return;
-
-    if (result.type === 'falseAlarm') {
-      set({ nextScrambleAt: result.nextScrambleAt, scrambleFlashUntil: result.flashUntil });
-      return;
-    }
-
-    // Reserve edges already in use: a scramble cannot close a passage mid-step.
-    const openEdges = new Set(result.maze.openEdges);
-    for (const travel of [get().heroTravel, ...get().monsters.map(m => m.travel)]) {
-      if (travel?.from.blockId === currentBlockId && travel.to.blockId === currentBlockId
-        && block.maze.openEdges.has(edgeKey(travel.from.cell, travel.to.cell))) {
-        openEdges.add(edgeKey(travel.from.cell, travel.to.cell));
-      }
-    }
-    const requiredCells = [get().heroCell!, ...(world.gatewaysByBlock.get(currentBlockId) ?? []).map(g => g.fromCell),
-      ...get().monsters.flatMap(m => [m.location, ...(m.travel ? [m.travel.to] : [])])
-        .filter(p => p.blockId === currentBlockId).map(p => p.cell)];
-    if (requiredCells.some(cell => !isReachable(openEdges, block.maze.width, block.maze.height,
-      block.maze.start, cell, block.maze.activeCells))) {
-      // Keep the openings from this scramble, but reject its closures if an actor
-      // or gateway would be stranded. This also preserves reciprocal block access.
-      for (const edge of block.maze.openEdges) openEdges.add(edge);
-    }
-    const blocks = world.blocks.slice();
-    blocks[blockIndex] = { ...block, maze: { ...result.maze, openEdges } };
-    set({
-      world: { ...world, blocks },
-      nextScrambleAt: result.nextScrambleAt,
-      scrambleFlashUntil: result.flashUntil,
-    });
+    set({ nextScrambleAt: result.nextScrambleAt, scrambleFlashUntil: result.flashUntil,
+      ...(result.type === 'scrambled' ? { world: result.world } : {}) });
   },
 
   castSigil: (type) => {
-    const { world, level, currentBlockId, heroCell, facing, inventory, pickups } = get();
-    if (!world || !level || !currentBlockId || !heroCell || get().caughtBy || get().paused || get().reachedExit || get().isMoving) return;
-    const blockIndex = world.blocks.findIndex((b) => b.id === currentBlockId);
-    if (blockIndex === -1) return;
+    const s = get();
+    const { world, level, currentBlockId, heroCell, facing, inventory, pickups } = s;
+    if (!world || !level || !currentBlockId || !heroCell || s.caughtBy || s.paused || s.reachedExit || s.isMoving) return;
+    const blockIndex = world.blocks.findIndex(b => b.id === currentBlockId);
+    if (blockIndex < 0) return;
     const block = world.blocks[blockIndex];
     const say = (message: string) => set({ feedback: { message, until: Date.now() + FEEDBACK_MS } });
+    if (!level.utilities.includes(type)) { say('This charm is not available in this level'); return; }
 
-    // 1. Standing on a matching pickup — acquire it.
     const key = pickupKey(currentBlockId, heroCell);
     if (pickups.get(key) === type) {
-      if (inventory.length >= level.inventoryCap) {
-        say('Inventory full');
-        return;
-      }
-      const nextPickups = new Map(pickups);
-      nextPickups.delete(key);
+      if (inventory.length >= level.inventoryCap) { say('Inventory full'); return; }
+      const nextPickups = new Map(pickups); nextPickups.delete(key);
       set({ inventory: [...inventory, type], pickups: nextPickups });
-      say(`Acquired ${type}`);
-      return;
+      say('Acquired ' + type); return;
     }
+    const index = inventory.indexOf(type);
+    if (index < 0) { say('No ' + type + ' to cast'); return; }
+    const nextInventory = inventory.slice(); nextInventory.splice(index, 1);
 
-    // 2. Otherwise, try to cast it from inventory.
-    const heldIndex = inventory.indexOf(type);
-    if (heldIndex === -1) {
-      say(`No ${type} to cast`);
-      return;
+    if (type === 'shield') {
+      set({ inventory: nextInventory, shieldUntil: s.simulationTime + SHIELD_MS });
+      say('Shield active for 5 seconds'); return;
     }
-
-    if (type !== 'phase' && type !== 'destroy') {
-      say(`${type} isn't implemented yet`);
-      return;
+    if (type === 'trap') {
+      if (s.traps.some(t => t.location.blockId === currentBlockId && posKey(t.location.cell) === posKey(heroCell) && t.expiresAt > s.simulationTime)) {
+        say('A trap is already here'); return;
+      }
+      set({ inventory: nextInventory, traps: [...s.traps, {
+        id: s.runId + ':' + s.simulationTime + ':' + s.traps.length,
+        location: { blockId: currentBlockId, cell: heroCell }, expiresAt: s.simulationTime + TRAP_LIFETIME_MS,
+      }] });
+      say('Trap placed — holds a monster for 4 seconds'); return;
+    }
+    if (type === 'scramble') {
+      if (!s.rng) return;
+      const nextWorld = scrambleWorld(world, s.rng, 0.7, s.monsters.map(m => m.travel));
+      const changed = nextWorld.blocks.some((b, i) => b.maze.openEdges.size !== world.blocks[i].maze.openEdges.size
+        || [...b.maze.openEdges].some(e => !world.blocks[i].maze.openEdges.has(e)));
+      if (!changed) { say('No walls can safely change'); return; }
+      set({ world: nextWorld, inventory: nextInventory, scrambleFlashUntil: Date.now() + 1050 });
+      say('Every block scrambled'); return;
+    }
+    if (type === 'dash') {
+      set({ dashRemaining: DASH_STEPS, dashDirection: facing });
+      if (!get().move(facing)) {
+        set({ dashRemaining: 0, dashDirection: null });
+        say('No open path ahead'); return;
+      }
+      set({ inventory: nextInventory });
+      say('Dash!'); return;
     }
 
     const target = findWallTarget(block, heroCell, facing);
-    if (!target) {
-      say('No wall there');
-      return;
-    }
-
-    const nextInventory = inventory.slice();
-    nextInventory.splice(heldIndex, 1);
-
+    if (!target) { say('No wall there'); return; }
     if (type === 'destroy') {
-      const nextMaze = applyDestroy(block.maze, target);
       const blocks = world.blocks.slice();
-      blocks[blockIndex] = { ...block, maze: nextMaze };
+      blocks[blockIndex] = { ...block, maze: applyDestroy(block.maze, target) };
       set({ world: { ...world, blocks }, inventory: nextInventory });
       say('Wall destroyed');
     } else {
       set({ heroCell: target.neighbor, inventory: nextInventory, isMoving: true,
         heroTravel: { from: { blockId: currentBlockId, cell: heroCell }, to: { blockId: currentBlockId, cell: target.neighbor },
-          startedAt: get().simulationTime, duration: HERO_STEP_MS } });
+          startedAt: s.simulationTime, duration: HERO_STEP_MS } });
       say('Phased through');
     }
   },

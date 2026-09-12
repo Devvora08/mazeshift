@@ -1,5 +1,5 @@
 import { BlurMask, Canvas, Circle, Group, Path, Skia } from '@shopify/react-native-skia';
-import { useCallback, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
@@ -18,7 +18,7 @@ interface SigilCanvasProps {
 }
 
 /** One shared magical drawing effect for every utility, independent of level configuration. */
-export function SigilCanvas({ width, height, onComplete }: SigilCanvasProps) {
+export const SigilCanvas = memo(function SigilCanvas({ width, height, onComplete }: SigilCanvasProps) {
   const trailPoints = useSharedValue<SigilPoint[]>([]);
   const particles = useSharedValue<SpellParticle[]>([]);
   const trailOpacity = useSharedValue(0);
@@ -172,4 +172,4 @@ export function SigilCanvas({ width, height, onComplete }: SigilCanvasProps) {
       </View>
     </GestureDetector>
   );
-}
+});

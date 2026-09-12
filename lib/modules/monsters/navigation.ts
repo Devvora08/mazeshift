@@ -14,6 +14,7 @@ interface Graph {
   cells: Map<string, WorldCell>;
   links: Map<string, Link[]>;
   fields: Map<string, Map<string, number>>;
+  detectionFields: Map<string, Map<string, number>>;
 }
 const graphs = new WeakMap<MazeWorld, Graph>();
 
@@ -21,7 +22,7 @@ const graphs = new WeakMap<MazeWorld, Graph>();
 export function graphFor(world: MazeWorld): Graph {
   const existing = graphs.get(world);
   if (existing) return existing;
-  const graph: Graph = { cells: new Map(), links: new Map(), fields: new Map() };
+  const graph: Graph = { cells: new Map(), links: new Map(), fields: new Map(), detectionFields: new Map() };
   for (const block of world.blocks) {
     for (const key of block.maze.activeCells) {
       const [x, y] = key.split(',').map(Number);
@@ -77,8 +78,8 @@ class MinHeap {
   }
 }
 
-const costOf = (link: Link, mobility: Mobility) => !link.wall || mobility === 'phase' ? 1
-  : mobility === 'bomb' ? 1 + BOMB_FUSE_MS / MONSTER_STEP_MS : Infinity;
+// Brute commits to direct pursuit even when bombing takes longer than a detour.
+const costOf = (link: Link, mobility: Mobility) => link.wall && mobility === 'walk' ? Infinity : 1;
 
 /** Reverse Dijkstra fields are shared by all pursuers with the same target/ability.
  * Gateway hops cost one step; a world-space Manhattan heuristic would be incorrect
@@ -111,10 +112,18 @@ export function distanceField(world: MazeWorld, target: WorldCell, mobility: Mob
 export function nextStep(world: MazeWorld, from: WorldCell, target: WorldCell, mobility: Mobility): Link | null {
   if (sameCell(from, target)) return null;
   const field = distanceField(world, target, mobility);
-  let best: Link | null = null, bestCost = Infinity;
+  let best: Link | null = null, bestCost = Infinity, bestDisplacement = Infinity;
+  const graph = graphFor(world);
+  const targetBlock = world.blocks.find(b => b.id === target.blockId)!;
   for (const link of graphFor(world).links.get(cellKey(from)) ?? []) {
     const cost = costOf(link, mobility) + (field.get(link.to) ?? Infinity);
-    if (cost < bestCost) { bestCost = cost; best = link; }
+    const candidate = graph.cells.get(link.to)!;
+    const block = world.blocks.find(b => b.id === candidate.blockId)!;
+    const displacement = (block.worldOffsetX + candidate.cell.x - targetBlock.worldOffsetX - target.cell.x) ** 2
+      + (block.worldOffsetY + candidate.cell.y - targetBlock.worldOffsetY - target.cell.y) ** 2;
+    if (cost < bestCost || (Number.isFinite(cost) && cost === bestCost && mobility !== 'walk' && displacement < bestDisplacement)) {
+      bestCost = cost; best = link; bestDisplacement = displacement;
+    }
   }
   return best;
 }
@@ -123,7 +132,10 @@ export function nextStep(world: MazeWorld, from: WorldCell, target: WorldCell, m
  * actual gateways. Shared once per tick rather than searching once per monster.
  */
 export function detectionDistances(world: MazeWorld, hero: WorldCell): Map<string, number> {
-  const graph = graphFor(world), distances = new Map([[cellKey(hero), 0]]), queue = [cellKey(hero)];
+  const graph = graphFor(world), heroKey = cellKey(hero);
+  const cached = graph.detectionFields.get(heroKey);
+  if (cached) return cached;
+  const distances = new Map([[heroKey, 0]]), queue = [heroKey];
   for (let i = 0; i < queue.length; i++) {
     const key = queue[i], depth = distances.get(key)!;
     if (depth >= 7) continue;
@@ -132,5 +144,7 @@ export function detectionDistances(world: MazeWorld, hero: WorldCell): Map<strin
       distances.set(link.to, depth + 1); queue.push(link.to);
     }
   }
+  if (graph.detectionFields.size >= 16) graph.detectionFields.delete(graph.detectionFields.keys().next().value!);
+  graph.detectionFields.set(heroKey, distances);
   return distances;
 }

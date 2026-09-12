@@ -1,55 +1,44 @@
+import { edgeKey } from '../../maze/graph';
 import type { Rng } from '../../maze/rng';
-import { scrambleMaze } from '../../maze/scramble';
-import type { Maze } from '../../maze/types';
-import type { MazeBlock } from '../../maze/world';
+import { eligibleEdgeCount, scrambleMaze } from '../../maze/scramble';
+import type { MazeWorld } from '../../maze/world';
+import type { Travel } from '../monsters/types';
 import type { ScrambleConfig } from './types';
 
-/** How long the UI "tell" (flash/pulse) should show after a scramble or false alarm. */
-export const SCRAMBLE_FLASH_MS = 600;
-
+export const SCRAMBLE_FLASH_MS = 1050;
 export function scheduleNextScramble(config: ScrambleConfig, rng: Rng, now: number): number {
-  const { minIntervalSec, maxIntervalSec } = config;
-  const span = maxIntervalSec - minIntervalSec;
-  return now + (minIntervalSec + rng() * span) * 1000;
+  return now + (config.minIntervalSec + rng() * (config.maxIntervalSec - config.minIntervalSec)) * 1000;
+}
+
+export function scrambleWorld(world: MazeWorld, rng: Rng, ratio: number, travels: (Travel | null)[] = []): MazeWorld {
+  const blocks = world.blocks.map(block => {
+    const reserved = new Set<string>();
+    for (const travel of travels) if (travel?.from.blockId === block.id && travel.to.blockId === block.id) {
+      const key = edgeKey(travel.from.cell, travel.to.cell);
+      if (block.maze.openEdges.has(key)) reserved.add(key);
+    }
+    const count = Math.round(eligibleEdgeCount(block.maze, reserved) * ratio);
+    const result = scrambleMaze(block.maze, rng, count, reserved);
+    return result.maze === block.maze ? block : { ...block, maze: result.maze };
+  });
+  return { ...world, blocks };
 }
 
 export type ScrambleTickResult =
   | { type: 'idle' }
   | { type: 'notDue' }
   | { type: 'falseAlarm'; nextScrambleAt: number; flashUntil: number }
-  | { type: 'scrambled'; maze: Maze; nextScrambleAt: number; flashUntil: number };
+  | { type: 'scrambled'; world: MazeWorld; nextScrambleAt: number; flashUntil: number };
 
-/**
- * Pure decision function for "should the current block scramble right now, and if so how" — the
- * store just calls this and applies whatever it returns. Keeps the scramble *rules* (timing,
- * false-alarm odds, intensity) in one place, separate from state orchestration.
- */
+/** One countdown governs the entire level, including unvisited blocks. */
 export function tickScramble(params: {
-  config: ScrambleConfig;
-  block: MazeBlock;
-  rng: Rng;
-  now: number;
-  nextScrambleAt: number | null;
+  config: ScrambleConfig; world: MazeWorld; rng: Rng; now: number;
+  nextScrambleAt: number | null; travels?: (Travel | null)[];
 }): ScrambleTickResult {
-  const { config, block, rng, now, nextScrambleAt } = params;
+  const { config, world, rng, now, nextScrambleAt, travels } = params;
   if (!config.enabled || nextScrambleAt === null) return { type: 'idle' };
   if (now < nextScrambleAt) return { type: 'notDue' };
-
-  const isFalseAlarm = rng() < config.falseAlarmChance;
-  if (isFalseAlarm) {
-    return {
-      type: 'falseAlarm',
-      nextScrambleAt: scheduleNextScramble(config, rng, now),
-      flashUntil: now + SCRAMBLE_FLASH_MS,
-    };
-  }
-
-  const intensity = Math.round(block.maze.activeCells.size * config.intensityRatio);
-  const { maze } = scrambleMaze(block.maze, rng, intensity);
-  return {
-    type: 'scrambled',
-    maze,
-    nextScrambleAt: scheduleNextScramble(config, rng, now),
-    flashUntil: now + SCRAMBLE_FLASH_MS,
-  };
+  const timing = { nextScrambleAt: scheduleNextScramble(config, rng, now), flashUntil: now + SCRAMBLE_FLASH_MS };
+  if (config.falseAlarmChance > 0 && rng() < config.falseAlarmChance) return { type: 'falseAlarm', ...timing };
+  return { type: 'scrambled', world: scrambleWorld(world, rng, config.intensityRatio, travels), ...timing };
 }

@@ -5,7 +5,8 @@ export interface ScrambleConfig {
   maxIntervalSec: number;
   /** Chance (0-1) that a scramble "tell" plays but nothing actually changes — keeps players honest. */
   falseAlarmChance: number;
-  /** Fraction of the *current block's* active cells attempted as wall toggles per scramble (0-1). */
+  /** Target fraction of eligible interior connections changed in every block.
+   * Permanent/in-use edges are excluded; full connectivity takes priority. */
   intensityRatio: number;
 }
 

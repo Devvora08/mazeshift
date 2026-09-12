@@ -53,16 +53,16 @@ test('16 sheets: exact PNG dimensions, five nonoverlapping bounded crops, fixed 
   }
 });
 
-test('walkers use a corridor detour; ghost phases; brute pays fuse cost', () => {
+test('walkers detour; Ghost and Brute choose direct pursuit through walls', () => {
   const world = fixture(3, 2);
   world.blocks[0].maze.openEdges.delete(edgeKey(p(0).cell, p(1).cell));
   assert.equal(nextStep(world, p(0), p(2), 'walk').direction, 'down');
   assert.equal(nextStep(world, p(0), p(2), 'phase').direction, 'right');
-  assert.equal(nextStep(world, p(0), p(2), 'bomb').direction, 'down');
+  assert.equal(nextStep(world, p(0), p(2), 'bomb').direction, 'right');
   const sealed = fixture(2, 1, false);
   assert.equal(nextStep(sealed, p(0), p(1), 'walk'), null);
   assert.equal(nextStep(sealed, p(0), p(1), 'bomb').wall, true);
-  assert.equal(distanceField(sealed, p(1), 'bomb').get(cellKey(p(0))), 1 + BOMB_FUSE_MS / MONSTER_STEP_MS);
+  assert.equal(distanceField(sealed, p(1), 'bomb').get(cellKey(p(0))), 1);
 });
 
 test('every generated gateway can be traversed both ways; masks cannot be phased out of', () => {
@@ -264,3 +264,4 @@ test('scrambling preserves occupied passages and actor/gateway reachability', ()
 });
 
 console.log(`${checks} monster checks passed.`);
+module.exports = { fixture, monster, p, travel, test, checkCount: () => checks };

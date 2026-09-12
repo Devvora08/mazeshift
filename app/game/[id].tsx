@@ -5,12 +5,14 @@ import { AppState, Pressable, Text, View } from 'react-native';
 import { DPad } from '../../components/DPad';
 import { SigilCanvas } from '../../components/SigilCanvas';
 import { WorldCanvas } from '../../components/WorldCanvas';
+import { PerformanceReadout } from '../../components/PerformanceReadout';
 import type { UtilityType } from '../../lib/modules/utilities';
 import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
 
 /** Retry only when a held direction is blocked; completed slides chain immediately. */
 const BLOCKED_RETRY_MS = 80;
+const SIMULATION_TICK_MS = 50;
 
 export default function GameScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -28,7 +30,9 @@ export default function GameScreen() {
   const inventory = useGameStore((s) => s.inventory);
   const pickups = useGameStore((s) => s.pickups);
   const feedback = useGameStore((s) => s.feedback);
-  const monsters = useGameStore((s) => s.monsters);
+  const traps = useGameStore((s) => s.traps);
+  const shieldUntil = useGameStore((s) => s.shieldUntil);
+  const heroTravel = useGameStore((s) => s.heroTravel);
   const caughtBy = useGameStore((s) => s.caughtBy);
   const stalkerAlert = useGameStore((s) => s.stalkerAlert);
   const paused = useGameStore((s) => s.paused);
@@ -41,6 +45,7 @@ export default function GameScreen() {
 
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [now, setNow] = useState(Date.now());
+  const [displaySimulationTime, setDisplaySimulationTime] = useState(0);
   const [heldDir, setHeldDir] = useState<Direction | null>(null);
   const heldDirection = useRef<Direction | null>(null);
   const screenActive = useRef(false);
@@ -83,13 +88,20 @@ export default function GameScreen() {
   }, [levelId, loadLevel]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    const simulationInterval = setInterval(() => {
       const t = Date.now();
-      setNow(t);
       advanceTime();
       if (screenActive.current) checkScramble(t);
-    }, 50);
-    return () => clearInterval(interval);
+    }, SIMULATION_TICK_MS);
+    // HUD clocks do not need to make React reconcile the game canvas 20 times a second.
+    const displayInterval = setInterval(() => {
+      setNow(Date.now());
+      setDisplaySimulationTime(useGameStore.getState().simulationTime);
+    }, 200);
+    return () => {
+      clearInterval(simulationInterval);
+      clearInterval(displayInterval);
+    };
   }, [checkScramble, advanceTime]);
 
   const handleMoveComplete = useCallback(() => {
@@ -127,6 +139,8 @@ export default function GameScreen() {
   const isFlashing = scrambleFlashUntil !== null && now < scrambleFlashUntil;
   const secondsToScramble = nextScrambleAt !== null ? Math.max(0, (nextScrambleAt - now) / 1000) : null;
   const isFeedbackVisible = feedback !== null && now < feedback.until;
+  const shieldActive = displaySimulationTime < shieldUntil;
+  const dashActive = !!heroTravel && heroTravel.duration < 200;
 
   const inventoryCounts = inventory.reduce<Partial<Record<UtilityType, number>>>((acc, type) => {
     acc[type] = (acc[type] ?? 0) + 1;
@@ -137,6 +151,7 @@ export default function GameScreen() {
     <View className="flex-1 bg-paper px-4 pt-14">
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
+        {__DEV__ ? ' · PERF-4' : ''}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {caughtBy
@@ -148,7 +163,7 @@ export default function GameScreen() {
           : reachedExit
             ? 'you made it out'
             : secondsToScramble !== null
-              ? `next scramble in ${secondsToScramble.toFixed(1)}s`
+              ? isFlashing ? 'all maze blocks are shifting' : `all blocks scramble in ${secondsToScramble.toFixed(1)}s`
               : 'maze is calm here'}
       </Text>
       {Object.keys(inventoryCounts).length > 0 && (
@@ -158,6 +173,9 @@ export default function GameScreen() {
             .join('   ')}
         </Text>
       )}
+      {shieldActive && <Text className="font-script text-sm text-ink-soft">
+        Shield: {Math.max(0, (shieldUntil - displaySimulationTime) / 1000).toFixed(1)}s
+      </Text>}
 
       <View
         className="mt-1 flex-1"
@@ -177,12 +195,16 @@ export default function GameScreen() {
               isHolding={isMoving || heldDir !== null}
               onMoveComplete={handleMoveComplete}
               pickups={pickups}
-              monsters={monsters}
+              allowedUtilities={level?.utilities ?? []}
+              traps={traps}
+              shieldActive={shieldActive}
+              dashActive={dashActive}
               paused={paused || !!caughtBy || reachedExit}
               width={canvasSize.width}
               height={canvasSize.height}
             />
             {!caughtBy && !reachedExit && !paused && <SigilCanvas width={canvasSize.width} height={canvasSize.height} onComplete={handleSigilComplete} />}
+            {__DEV__ && !paused && <PerformanceReadout />}
           </>
         )}
       </View>

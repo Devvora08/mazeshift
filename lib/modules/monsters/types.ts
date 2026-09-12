@@ -13,7 +13,8 @@ export interface Monster {
   travel: Travel | null;
   bomb: { target: WorldCell; startedAt: number; detonatesAt: number } | null;
   blast: { from: WorldCell; to: WorldCell; until: number } | null;
-  mode: 'roam' | 'chase' | 'search' | 'bomb';
+  mode: 'roam' | 'chase' | 'search' | 'bomb' | 'stunned';
+  stunnedUntil?: number;
   lastKnown: WorldCell | null;
   patrolTarget: WorldCell | null;
   patrolSequence: number;

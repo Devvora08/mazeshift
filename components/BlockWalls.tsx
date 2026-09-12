@@ -88,10 +88,11 @@ function pathFromSlots(slots: WallSegment[], ox: number, oy: number, cellSize: n
 }
 
 
-export const BlockWalls = memo(function BlockWalls({ block, openSides, cellSize }: {
+export const BlockWalls = memo(function BlockWalls({ block, openSides, cellSize, animate = true }: {
   block: MazeBlock;
   openSides: ReadonlySet<string>;
   cellSize: number;
+  animate?: boolean;
 }) {
   const ox = block.worldOffsetX * cellSize;
   const oy = block.worldOffsetY * cellSize;
@@ -105,6 +106,17 @@ export const BlockWalls = memo(function BlockWalls({ block, openSides, cellSize 
   useLayoutEffect(() => {
     if (previousTargets.current === targets) return;
     previousTargets.current = targets;
+    if (!animate) {
+      // Every offscreen block still changes logically. Avoid computing hundreds
+      // of invisible hinge pairings during a level-wide scramble.
+      runOnUI((next: WallSegment[]) => {
+        'worklet';
+        cancelAnimation(progress);
+        scene.value = { fixed: next, moving: [] };
+        progress.value = 1;
+      })(targets);
+      return;
+    }
     // Sample an interrupted transition before replacing it. Scene and clock change together
     // on the UI thread, so the new maze cannot flash onscreen before the movement starts.
     runOnUI((next: WallSegment[]) => {
@@ -116,7 +128,7 @@ export const BlockWalls = memo(function BlockWalls({ block, openSides, cellSize 
       progress.value = 0;
       progress.value = withTiming(1, { duration: WALL_SHIFT_MS, easing: Easing.linear });
     })(targets);
-  }, [targets, scene, progress]);
+  }, [targets, scene, progress, animate]);
 
   useEffect(() => () => cancelAnimation(progress), [progress]);
 

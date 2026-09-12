@@ -1,13 +1,12 @@
-import { Atlas, Circle, Group, Skia, rect, useImage } from '@shopify/react-native-skia';
+import { Atlas, Circle, Skia, rect, useImage } from '@shopify/react-native-skia';
 import { memo, useEffect } from 'react';
-import { cancelAnimation, Easing, useDerivedValue, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
+import { cancelAnimation, Easing, useDerivedValue, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSpriteLoop } from '../hooks/useSpriteLoop';
 import type { Monster, WorldCell } from '../lib/modules/monsters';
-import type { MazeWorld, Direction } from '../lib/maze/world';
-import { MONSTER_SHEETS, type MonsterSheet } from '../lib/sprites/monsterFrames';
+import type { MazeWorld } from '../lib/maze/world';
+import { MONSTER_SHEETS } from '../lib/sprites/monsterFrames';
 import { useGameStore } from '../store/gameStore';
 
-const DIRECTIONS: Direction[] = ['up', 'down', 'left', 'right'];
 const HEIGHT = { hunter: 1.8, wraith: 1.65, brute: 1.8, stalker: 1.8 };
 
 function worldPoint(world: MazeWorld, p: WorldCell, size: number) {
@@ -15,25 +14,6 @@ function worldPoint(world: MazeWorld, p: WorldCell, size: number) {
   return { x: (block.worldOffsetX + p.cell.x + 0.5) * size,
     y: (block.worldOffsetY + p.cell.y + 1) * size };
 }
-
-const DirectionSheet = memo(function DirectionSheet({ sheet, active, frame, x, y, height }: {
-  sheet: MonsterSheet; active: boolean; frame: SharedValue<number>; x: SharedValue<number>;
-  y: SharedValue<number>; height: number;
-}) {
-  const image = useImage(sheet.asset);
-  const scale = height / sheet.frames[0].height;
-  const sprites = useDerivedValue(() => {
-    const f = sheet.frames[frame.value] ?? sheet.frames[0];
-    return [rect(f.x, f.y, f.width, f.height)];
-  });
-  const transforms = useDerivedValue(() => {
-    const f = sheet.frames[frame.value] ?? sheet.frames[0];
-    return [Skia.RSXform(scale, 0, x.value - f.width * scale / 2, y.value - f.height * scale)];
-  });
-  return image ? <Group opacity={active ? 1 : 0}>
-    <Atlas image={image} sprites={sprites} transforms={transforms} />
-  </Group> : null;
-});
 
 function BombEffect({ monster, world, cellSize, paused }: {
   monster: Monster; world: MazeWorld; cellSize: number; paused: boolean;
@@ -72,6 +52,24 @@ export const MonsterSprite = memo(function MonsterSprite({ monster, world, cellS
   const initial = worldPoint(world, monster.location, cellSize);
   const x = useSharedValue(initial.x), y = useSharedValue(initial.y);
   const frame = useSpriteLoop(5, !paused && monster.travel ? 10 : 0);
+  // Decode each direction once, but submit only the active sheet to Skia. Previously
+  // four Atlas nodes were drawn per monster every frame, three at zero opacity.
+  const sheets = MONSTER_SHEETS[monster.type];
+  const upImage = useImage(sheets.up.asset);
+  const downImage = useImage(sheets.down.asset);
+  const leftImage = useImage(sheets.left.asset);
+  const rightImage = useImage(sheets.right.asset);
+  const image = { up: upImage, down: downImage, left: leftImage, right: rightImage }[monster.facing];
+  const sheet = sheets[monster.facing];
+  const scale = cellSize * HEIGHT[monster.type] / sheet.frames[0].height;
+  const sprites = useDerivedValue(() => {
+    const f = sheet.frames[frame.value] ?? sheet.frames[0];
+    return [rect(f.x, f.y, f.width, f.height)];
+  });
+  const transforms = useDerivedValue(() => {
+    const f = sheet.frames[frame.value] ?? sheet.frames[0];
+    return [Skia.RSXform(scale, 0, x.value - f.width * scale / 2, y.value - f.height * scale)];
+  });
   const travel = monster.travel;
   const location = monster.location;
   useEffect(() => {
@@ -92,9 +90,9 @@ export const MonsterSprite = memo(function MonsterSprite({ monster, world, cellS
   return <>
     {monster.type === 'stalker' && monster.mode === 'chase' && <Circle cx={x} cy={ringY}
       r={cellSize * 0.55} color="#b45309" style="stroke" strokeWidth={1.5} opacity={0.8} />}
-    {DIRECTIONS.map(direction => <DirectionSheet key={direction}
-      sheet={MONSTER_SHEETS[monster.type][direction]} active={direction === monster.facing}
-      frame={frame} x={x} y={y} height={cellSize * HEIGHT[monster.type]} />)}
+    {monster.mode === 'stunned' && <Circle cx={x} cy={ringY}
+      r={cellSize * 0.65} color="#ef4444" style="stroke" strokeWidth={3} />}
+    {image && <Atlas image={image} sprites={sprites} transforms={transforms} />}
     <BombEffect monster={monster} world={world} cellSize={cellSize} paused={paused} />
   </>;
 });

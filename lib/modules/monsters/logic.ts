@@ -52,6 +52,7 @@ export function tickMonsters(world: MazeWorld, monsters: Monster[], hero: WorldC
   if (!monsters.length) return { world, monsters, alert: false };
   const distances = detectionDistances(world, hero);
   const spots = (m: Monster) => {
+    if ((m.stunnedUntil ?? 0) > now) return false;
     if (!m.travel) return (distances.get(cellKey(m.location)) ?? Infinity) <= TRACK_RADIUS[m.type];
     const p = progress(m.travel, now);
     // Distance along the current edge: no one-cell jumps in detection at arrival.
@@ -65,6 +66,7 @@ export function tickMonsters(world: MazeWorld, monsters: Monster[], hero: WorldC
     let m = original;
     const change = (patch: Partial<Monster>) => { m = { ...m, ...patch }; };
     if (m.blast && now >= m.blast.until) change({ blast: null });
+    if ((m.stunnedUntil ?? 0) > now) return m;
     const detected = alert || spots(m);
     if (detected && (!m.lastKnown || !sameCell(m.lastKnown, hero))) change({ lastKnown: hero, patrolTarget: null });
     const intent = m.bomb ? 'bomb' : detected ? 'chase' : m.lastKnown ? 'search' : 'roam';

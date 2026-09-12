@@ -12,7 +12,7 @@ export const PRACTICE_LEVEL: LevelConfig = {
   blocks: [{ width: 12, height: 14, shape: 'rect' }],
   scramble: NO_SCRAMBLE,
   monsters: [],
-  utilities: ['phase', 'destroy'],
+  utilities: ['phase', 'destroy', 'scramble', 'dash', 'shield', 'trap'],
   inventoryCap: 6,
 };
 
@@ -40,7 +40,8 @@ function bfsOrder(maze: Maze, start: Position): Position[] {
 export function practicePickups(maze: Maze): { cell: Position; type: UtilityType }[] {
   const order = bfsOrder(maze, maze.start);
   const pickups: { cell: Position; type: UtilityType }[] = [];
-  if (order[2]) pickups.push({ cell: order[2], type: 'phase' });
-  if (order[6]) pickups.push({ cell: order[6], type: 'destroy' });
+  PRACTICE_LEVEL.utilities.forEach((type, index) => {
+    if (order[2 + index * 4]) pickups.push({ cell: order[2 + index * 4], type });
+  });
   return pickups;
 }
