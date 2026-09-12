@@ -130,24 +130,26 @@ const PickupMarker = memo(function PickupMarker({ x, y, cellSize, image, color, 
   );
 });
 
-/** Keep decoded sheets mounted: an image can never use another sheet's rectangles. */
-const HeroSprite = memo(function HeroSprite({ name, cellSize, worldX, worldY, paused }: {
+const HERO_ANIMATIONS = Object.keys(HERO_SHEETS) as HeroAnimationName[];
+
+/**
+ * Keep every decoded sheet bound to its own frame geometry. Only the selected
+ * direction records an Atlas or runs a frame clock, so direction changes are
+ * atomic without giving up the single-active-Atlas rendering optimization.
+ */
+const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, worldY, paused }: {
   name: HeroAnimationName;
+  active: boolean;
   paused: boolean;
   cellSize: number;
   worldX: SharedValue<number>;
   worldY: SharedValue<number>;
 }) {
   const sheet = HERO_SHEETS[name];
-  const idle = useImage(HERO_SHEETS.idle.asset);
-  const up = useImage(HERO_SHEETS.up.asset);
-  const down = useImage(HERO_SHEETS.down.asset);
-  const left = useImage(HERO_SHEETS.left.asset);
-  const right = useImage(HERO_SHEETS.right.asset);
-  const image = { idle, up, down, left, right }[name];
+  const image = useImage(sheet.asset);
   // Eight drawings take the same cycle time as five, rather than slowing the gait.
   const fps = name === 'idle' ? IDLE_FPS : RUN_FPS * sheet.frames.length / 5;
-  const frame = useSpriteLoop(sheet.frames.length, paused ? 0 : fps);
+  const frame = useSpriteLoop(sheet.frames.length, active && !paused ? fps : 0);
   const scale = cellSize * HERO_HEIGHT_IN_CELLS / sheet.frames[0].height;
   const sprites = useDerivedValue(() => {
     const f = sheet.frames[frame.value] ?? sheet.frames[0];
@@ -158,7 +160,9 @@ const HeroSprite = memo(function HeroSprite({ name, cellSize, worldX, worldY, pa
     return [Skia.RSXform(scale, 0, worldX.value - f.width * scale / 2,
       worldY.value - f.height * scale)];
   });
-  return image ? <Atlas image={image} sprites={sprites} transforms={transforms} /> : null;
+  return active && image
+    ? <Atlas image={image} sprites={sprites} transforms={transforms} />
+    : null;
 });
 
 export const WorldCanvas = memo(function WorldCanvas({
@@ -219,6 +223,11 @@ export const WorldCanvas = memo(function WorldCanvas({
     }
     return markers;
   }, [pickups, world, cellSize, nearbyBlockIds]);
+
+  const nearbyTraps = useMemo(
+    () => traps.filter(trap => nearbyBlockIds.has(trap.location.blockId)),
+    [traps, nearbyBlockIds],
+  );
 
   // Gateway "open side" lookups per block, computed once per world (never changes after
   // generation) rather than rebuilt inline every render — that rebuild was invalidating every
@@ -308,7 +317,9 @@ export const WorldCanvas = memo(function WorldCanvas({
 
   return (
     <View style={{ width, height }}>
-    <Canvas style={StyleSheet.absoluteFill}>
+    {/* Keep animated wall geometry off the hero/effects canvases. A scramble can
+        now rebuild its paths without making sprite frames redraw that geometry. */}
+    <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
       <Group transform={cameraTransform}>
         {world.blocks.filter(block => nearbyBlockIds.has(block.id)).map((block) => (
           <BlockWalls
@@ -319,8 +330,15 @@ export const WorldCanvas = memo(function WorldCanvas({
             animate={block.id === currentBlockId}
           />
         ))}
+      </Group>
+    </Canvas>
 
-        <ExitRadar x={exitWorldX} y={exitWorldY} cellSize={cellSize} />
+    {/* Ambient effects update continuously, but no longer invalidate walls or
+        the hero Atlas. Skip the exit radar until its block is nearby. */}
+    <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <Group transform={cameraTransform}>
+        {nearbyBlockIds.has(endBlock.id) &&
+          <ExitRadar x={exitWorldX} y={exitWorldY} cellSize={cellSize} />}
 
         {pickupMarkers.map((m) => (
           <PickupMarker key={m.key} x={m.x} y={m.y} cellSize={cellSize}
@@ -329,7 +347,7 @@ export const WorldCanvas = memo(function WorldCanvas({
         ))}
 
 
-        {traps.map(trap => {
+        {nearbyTraps.map(trap => {
           const block = world.blocks.find(b => b.id === trap.location.blockId)!;
           const x = (block.worldOffsetX + trap.location.cell.x + 0.5) * cellSize;
           const y = (block.worldOffsetY + trap.location.cell.y + 0.5) * cellSize;
@@ -339,7 +357,13 @@ export const WorldCanvas = memo(function WorldCanvas({
               width={cellSize*0.6} height={cellSize*0.6} fit="contain" />}
           </Group>;
         })}
+      </Group>
+    </Canvas>
 
+    {/* Hero movement/frame ticks stay on a tiny independent canvas, so held
+        movement remains smooth while walls and ambient effects are busy. */}
+    <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <Group transform={cameraTransform}>
         {shieldActive && <>
           <Circle cx={heroWorldX} cy={auraY} r={cellSize * 0.85} color="#38bdf8" opacity={0.16} />
           <Circle cx={heroWorldX} cy={auraY} r={cellSize * 0.85} color="#38bdf8" style="stroke" strokeWidth={2.5} />
@@ -347,10 +371,13 @@ export const WorldCanvas = memo(function WorldCanvas({
         {dashActive && <Circle cx={heroWorldX} cy={auraY} r={cellSize * 0.65}
           color="#facc15" style="stroke" strokeWidth={3} opacity={0.8} />}
 
-        <HeroSprite name={animationName}
-          cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} paused={paused} />
+        {HERO_ANIMATIONS.map(name => (
+          <HeroSprite key={name} name={name} active={animationName === name}
+            cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} paused={paused} />
+        ))}
       </Group>
     </Canvas>
+
     <MonsterLayer world={world} currentBlockId={currentBlockId} cellSize={cellSize}
       cameraTransform={cameraTransform} paused={paused} />
     </View>
