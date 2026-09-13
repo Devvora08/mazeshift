@@ -10,8 +10,13 @@ import {
   ArchitectsDaughter_400Regular,
 } from '@expo-google-fonts/architects-daughter';
 import { PatrickHand_400Regular } from '@expo-google-fonts/patrick-hand';
+import { useProgressStore } from '../store/progressStore';
+import { usePurchaseStore } from '../store/purchaseStore';
 
 export default function RootLayout() {
+  const hydrate = useProgressStore((state) => state.hydrate);
+  const progressHydrated = useProgressStore((state) => state.hydrated);
+  const initializePurchases = usePurchaseStore((state) => state.initialize);
   const [fontsLoaded, fontError] = useFonts({
     ArchitectsDaughter: ArchitectsDaughter_400Regular,
     PatrickHand: PatrickHand_400Regular,
@@ -20,6 +25,11 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontError) console.error(fontError);
   }, [fontError]);
+
+  useEffect(() => { void hydrate(); }, [hydrate]);
+  useEffect(() => {
+    if (progressHydrated) void initializePurchases();
+  }, [initializePurchases, progressHydrated]);
 
   if (!fontsLoaded && !fontError) return null;
 

@@ -2,7 +2,10 @@
   "expo": {
     "name": "MazeShift",
     "slug": "mazeshift",
-    "scheme": "mazeshift",
+    "scheme": [
+      "mazeshift",
+      "rc-3173e00c23"
+    ],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -18,7 +21,13 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -34,6 +43,13 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "revenueCatAndroidApiKey": "goog_EPcfwOotdQoncBDvsyzuJFaykcY",
+      "router": {},
+      "eas": {
+        "projectId": "e12478fc-000b-4fa4-b406-af18358e325d"
+      }
     }
   }
 }

@@ -9,6 +9,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import type { Direction } from '../store/gameStore';
+import { useProgressStore } from '../store/progressStore';
 
 interface DPadProps {
   size?: number;
@@ -26,6 +27,7 @@ const DirectionKey = memo(function DirectionKey({ direction, size, onDown, onUp 
   onDown: (direction: Direction) => void;
   onUp: (direction: Direction) => void;
 }) {
+  const hapticsEnabled = useProgressStore((state) => state.settings.hapticsEnabled);
   const press = useSharedValue(0);
   const faceStyle = useAnimatedStyle(() => ({
     transform: [
@@ -47,7 +49,7 @@ const DirectionKey = memo(function DirectionKey({ direction, size, onDown, onUp 
       onPressIn={() => {
         onDown(direction);
         press.value = withSpring(1, SPRING);
-        void Haptics.selectionAsync().catch(() => {});
+        if (hapticsEnabled) void Haptics.selectionAsync().catch(() => {});
       }}
       onPressOut={() => {
         onUp(direction);

@@ -108,12 +108,11 @@ export const LEVELS: LevelConfig[] = [
     utilities: ['phase', 'destroy', 'scramble', 'dash'],
     inventoryCap: 2,
   }),
-  level(15, 3, 'The Maze Knows You', 6, 21, 25, {
+  level(15, 3, 'No Safe Route', 6, 21, 25, {
     scramble: { enabled: true, minIntervalSec: 10, maxIntervalSec: 13, falseAlarmChance: 0, intensityRatio: 0.7 },
     monsters: ['hunter', 'wraith', 'brute', 'stalker'],
     utilities: ['phase', 'destroy', 'scramble', 'dash'],
     inventoryCap: 2,
-    isBoss: true,
   }),
   level(16, 4, 'Being Watched', 4, 15, 19, {
     scramble: NO_SCRAMBLE,
@@ -139,12 +138,11 @@ export const LEVELS: LevelConfig[] = [
     utilities: ['phase', 'destroy', 'scramble', 'dash', 'shield', 'trap'],
     inventoryCap: 1,
   }),
-  level(20, 4, 'The Maze Fights Back', 7, 23, 28, {
+  level(20, 4, 'Final Shift', 7, 23, 28, {
     scramble: { enabled: true, minIntervalSec: 8, maxIntervalSec: 11, falseAlarmChance: 0, intensityRatio: 0.7 },
     monsters: ['hunter', 'wraith', 'brute', 'stalker'],
     utilities: ['phase', 'destroy', 'scramble', 'dash', 'shield', 'trap'],
     inventoryCap: 1,
-    isBoss: true,
   }),
 ];
 

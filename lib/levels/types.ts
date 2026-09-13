@@ -16,5 +16,4 @@ export interface LevelConfig {
   monsters: MonsterType[];
   utilities: UtilityType[];
   inventoryCap: number;
-  isBoss?: boolean;
 }

@@ -9,14 +9,18 @@ import { PerformanceReadout } from '../../components/PerformanceReadout';
 import type { UtilityType } from '../../lib/modules/utilities';
 import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
+import { formatRunTime, useProgressStore } from '../../store/progressStore';
 
 /** Retry only when a held direction is blocked; completed slides chain immediately. */
 const BLOCKED_RETRY_MS = 80;
 const SIMULATION_TICK_MS = 50;
 
 export default function GameScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, resume } = useLocalSearchParams<{ id: string; resume?: string }>();
   const levelId = Number(id);
+  const progressHydrated = useProgressStore((state) => state.hydrated);
+  const highestUnlockedLevel = useProgressStore((state) => state.highestUnlockedLevel);
+  const premiumUnlocked = useProgressStore((state) => state.premiumUnlocked);
 
   const level = useGameStore((s) => s.level);
   const world = useGameStore((s) => s.world);
@@ -47,6 +51,9 @@ export default function GameScreen() {
   const [now, setNow] = useState(Date.now());
   const [displaySimulationTime, setDisplaySimulationTime] = useState(0);
   const [heldDir, setHeldDir] = useState<Direction | null>(null);
+  const baseElapsed = useRef(0);
+  const recordedDeathRun = useRef<number | null>(null);
+  const recordedWinRun = useRef<number | null>(null);
   const heldDirection = useRef<Direction | null>(null);
   const screenActive = useRef(false);
   const previousTick = useRef(performance.now());
@@ -83,9 +90,43 @@ export default function GameScreen() {
   }, [caughtBy, reachedExit, paused, clearInput]);
 
   useEffect(() => {
+    if (!progressHydrated) return;
+    const progress = useProgressStore.getState();
+    if (levelId > progress.highestUnlockedLevel || (levelId > 10 && !progress.premiumUnlocked)) return;
+    const continued = resume === '1' && progress.activeRun?.levelId === levelId;
+    baseElapsed.current = continued ? progress.activeRun!.elapsedMs : 0;
     loadLevel(levelId);
+    if (!continued) progress.startRun(levelId);
     previousTick.current = performance.now();
-  }, [levelId, loadLevel]);
+  }, [levelId, resume, loadLevel, progressHydrated, premiumUnlocked]);
+
+  useEffect(() => {
+    if (progressHydrated && (levelId > highestUnlockedLevel || (levelId > 10 && !premiumUnlocked))) router.replace('/');
+  }, [progressHydrated, highestUnlockedLevel, premiumUnlocked, levelId]);
+
+  useEffect(() => {
+    if (levelId === 0) return;
+    const elapsed = baseElapsed.current + useGameStore.getState().simulationTime;
+    if (caughtBy && recordedDeathRun.current !== runId) {
+      recordedDeathRun.current = runId;
+      useProgressStore.getState().recordDeath(levelId, elapsed);
+    }
+    if (reachedExit && recordedWinRun.current !== runId) {
+      recordedWinRun.current = runId;
+      useProgressStore.getState().completeLevel(levelId, elapsed);
+    }
+  }, [caughtBy, reachedExit, runId, levelId]);
+
+  useEffect(() => {
+    if (levelId === 0 || reachedExit) return;
+    const interval = setInterval(() => {
+      useProgressStore.getState().checkpointRun(levelId, baseElapsed.current + useGameStore.getState().simulationTime);
+    }, 2000);
+    return () => {
+      clearInterval(interval);
+      useProgressStore.getState().checkpointRun(levelId, baseElapsed.current + useGameStore.getState().simulationTime);
+    };
+  }, [levelId, reachedExit]);
 
   useEffect(() => {
     const simulationInterval = setInterval(() => {
@@ -212,9 +253,15 @@ export default function GameScreen() {
       <View className="h-72 items-center">
         {caughtBy || reachedExit ? <View className="items-center pt-6">
           <Text className="font-hand text-3xl text-ink">{caughtBy ? 'The maze claimed you' : 'You made it out'}</Text>
+          {reachedExit && <Text className="font-script text-base text-ink-soft">Time {formatRunTime(baseElapsed.current + displaySimulationTime)}</Text>}
+          {reachedExit && levelId < 20 && <Pressable accessibilityRole="button" accessibilityLabel="Next level"
+            className="mt-4 rounded-xl bg-ink px-8 py-3" onPress={() => router.replace({ pathname: '/game/[id]', params: { id: String(levelId + 1) } })}>
+            <Text className="font-hand text-xl text-paper">Next level</Text>
+          </Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel="Retry level"
             className="mt-4 rounded-xl bg-ink px-8 py-3" onPress={() => {
-              clearInput(); loadLevel(levelId); previousTick.current = performance.now();
+              clearInput(); baseElapsed.current = 0; useProgressStore.getState().startRun(levelId);
+              loadLevel(levelId); previousTick.current = performance.now();
             }}>
             <Text className="font-hand text-xl text-paper">Try again</Text>
           </Pressable>

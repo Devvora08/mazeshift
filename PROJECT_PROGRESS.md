@@ -1,6 +1,6 @@
 # MazeShift — Project Progress
 
-Updated: 2026-09-12
+Updated: 2026-09-13
 
 This is a snapshot of the current source code and work completed so far. A feature listed in a level configuration is not necessarily implemented at runtime; those distinctions are recorded below.
 
@@ -8,7 +8,7 @@ This is a snapshot of the current source code and work completed so far. A featu
 
 Performance follow-up (PERF-5): walls, ambient pickups/radar/traps, the hero, and monsters now render on isolated transparent Skia layers. A wall scramble no longer makes the hero Atlas or ambient effects redraw the wall geometry, and offscreen exit/trap effects are culled. Monster rendering retains its shallow visible-monster subscription. Hero directions remain bound to stable sheet/frame instances while only one Atlas and frame clock are active, eliminating direction-change crop glitches. Ambient pickup dust uses fixed geometry, SigilCanvas is memoized, and simulation polling remains at 50 ms. The user tested the sprite fix and isolated-layer build across multiple levels, confirmed the visual glitch is gone, and approved the subsequent sprite and spell changes on 2026-09-12. Broader measured device profiling remains pending.
 
-MazeShift has a playable maze-navigation foundation, animated hero movement, connected maze blocks, configurable timed scrambling, visible rotating wall transitions, a spell-practice area, and four animated monster types with pursuit and death/retry gameplay. The circular D-pad and magical drawing effects are implemented. All six spell effects and campaign pickup placement are implemented. Persistent progression, audio, and boss encounters remain unfinished.
+MazeShift has a playable maze-navigation foundation, animated hero movement, connected maze blocks, configurable timed scrambling, visible rotating wall transitions, a spell-practice area, and four animated monster types with pursuit and death/retry gameplay. The circular D-pad and magical drawing effects are implemented. All six spell effects, campaign pickup placement, device-local campaign progression, and the RevenueCat full-game entitlement flow are implemented. Audio playback remains unfinished. Boss encounters and boss labeling were removed from the 20-level scope on 2026-09-13.
 
 ## Implemented gameplay
 
@@ -21,7 +21,7 @@ MazeShift has a playable maze-navigation foundation, animated hero movement, con
 - Smooth hero position interpolation and camera pans between blocks.
 - Animated exit radar and basic exit-reached text feedback during normal movement.
 - A home screen listing Practice and 20 configured levels across four chapters.
-- Boss markers in the level list where configured; these are metadata, not implemented boss encounters.
+- Sequential campaign unlocking backed by device-local storage; Practice remains always available.
 
 ### Hero sprites and movement fixes
 
@@ -80,7 +80,7 @@ MazeShift has a playable maze-navigation foundation, animated hero movement, con
 - Binary-heap reverse Dijkstra fields support wall-aware walking routes and wall-independent phasing/bombing routes with displacement-based ties across the entire world. Fields are shared between matching pursuers, bounded in memory, and invalidated when the immutable world changes.
 - All 16 directional PNG strips have five frames. Hunter and Stalker use the replacement `hunt_left/right` and `stalk_left/right` sheets; Brute uses the replacement `bomb_left/right` sheets. The four new Hunter/Stalker side animations have a tested 1.2× visual-size correction while retaining their foot anchor and gameplay collision. Source dimensions and crop rectangles are validated, each direction uses a fixed vertical crop/baseline, and decoded images remain paired with their own coordinates and UI frame clock.
 - Continuous graph-space contact handles head-on swaps, shared junctions, and gateway crossings, without killing through an adjacent solid wall. All four monsters cause death on contact. Bomb effects open walls; no extra area damage is implemented.
-- Death stops movement/casting/scrambling and presents Retry / Back to levels. Retry regenerates the level and clears monster, bomb, alert, inventory, and movement state. Reaching the final exit freezes the encounter and offers the same navigation controls. Persistent unlocking/next-level progression is still pending.
+- Death stops movement/casting/scrambling and presents Retry / Back to levels. Retry regenerates the level and clears monster, bomb, alert, inventory, and movement state. Reaching the final exit freezes the encounter and offers Next Level / Back to levels. Campaign unlocking and completion records persist locally.
 - Backgrounding or leaving the game pauses simulation and input, freezes actor movement, and shifts the next scramble deadline on resume. Scrambles preserve edges in use and reject closures that would isolate an actor or gateway.
 
 ## Spells and practice
@@ -135,7 +135,7 @@ MazeShift has a playable maze-navigation foundation, animated hero movement, con
 
 ## Modular architecture
 
-Level configuration composes maze block plans, scramble settings, monster types, allowed utility types, inventory capacity, and optional boss metadata. The structure supports enabling features per level, but each module still needs its own runtime implementation.
+Level configuration composes maze block plans, scramble settings, monster types, allowed utility types, and inventory capacity. The 20-level campaign no longer contains boss metadata.
 
 | Area | Main files |
 | --- | --- |
@@ -157,14 +157,16 @@ Level configuration composes maze block plans, scramble settings, monster types,
 | Monster sprite frames and UI-thread rendering | `lib/sprites/monsterFrames.ts`, `components/MonsterSprite.tsx` |
 | Isolated monster canvas and development frame metrics | `components/MonsterLayer.tsx`, `components/PerformanceReadout.tsx` |
 | Repeatable gameplay verification | `scripts/test-monsters.cjs`, `scripts/test-gameplay.cjs` (`npm run test:gameplay`) |
+| Device-local progression, records, active run, and settings | `store/progressStore.ts` |
+| RevenueCat initialization, purchase, restore, and premium entitlement | `store/purchaseStore.ts` |
 
 ## Defined or present, but not yet implemented
 
 - Further monster balance and broader device/performance testing. The user approved the monster implementation after the Expo test handoff; runtime enemies and sprite mapping are implemented.
-- Boss encounters beyond configured flags and home-screen markers.
-- Persistent progress, saves, level unlocking, and a next-level flow. Basic win/death/retry navigation is implemented.
+- Exact mid-maze restoration is not implemented: Continue restores the active level and accumulated run time on its deterministic initial layout. Campaign records, unlocking, attempts, deaths, best times, settings, and Next Level flow are persisted locally.
 - Audio playback and sound design; an audio dependency is installed, but gameplay audio is not wired in.
-- Purchases/paywalls: free/paid pack boundaries are mentioned in level-plan comments, but purchase behavior is not implemented.
+- Production launch and store-listing completion remain pending. The Google Play and RevenueCat purchase setup itself is complete: the non-consumable `mazeshift_full_game` product is active, attached to the permanent `full_game` entitlement and the current `default` lifetime offering. The app gates level 11 onward, purchases/restores through RevenueCat, refreshes ownership on launch, and uses the local entitlement only as an offline cache.
+- Restore Purchase is permanently available in Settings even after access is unlocked. Settings also shows the selectable anonymous RevenueCat Purchase support ID so a device can be matched to its dashboard customer during support and testing.
 
 ## Validation and delivery history
 
@@ -187,6 +189,10 @@ Level configuration composes maze block plans, scramble settings, monster types,
 - Current sprite update replaces Hero, Hunter, Stalker, and Brute left/right sheets. The user approved the final five-frame Hunter/Stalker versions and their 1.2× side-view sizing after device playtesting.
 - Current spell update makes gesture position irrelevant for acquisition and casting, adds lenient reversed/mirrored/sparse recognition with per-shape thresholds, and makes Phase/Destroy choose an adjacent wall from hero state. The user reported that this works brilliantly.
 - All 32 current gameplay/monster check groups pass, including canvas-location-independent, reversed, and sparse sigil recognition plus nearest-adjacent-wall selection. TypeScript and `git diff --check` pass.
+- Google Play internal testing is operational with Android package `com.mazeshift.app`; release version code 3 was installed from the tester opt-in flow on a physical Android device.
+- The user completed a Google Play license-test purchase using the always-approves test card. Google Play recorded the order as Processed, RevenueCat recorded `mazeshift_full_game` for INR 590 in sandbox data, and the `Full Game` entitlement became Active with unlimited duration. Level 11 unlocked and progression continued into level 12.
+- Restore Purchase was verified successfully against the original anonymous RevenueCat customer. As expected, restoring created neither a new customer nor a second transaction; it re-synchronized the existing non-consumable purchase and entitlement.
+- TypeScript passes after adding the permanent Restore Purchase control and RevenueCat support ID display.
 
 ## Development setup
 
@@ -200,5 +206,6 @@ Level configuration composes maze block plans, scramble settings, monster types,
 
 1. Continue tuning monster range, spawn density, bomb tells, and movement feel based on playtest feedback.
 2. Perform broader device profiling of late-game simultaneous scrambles, monsters, effects, and continuous hero movement.
-3. Build completion/retry/progression persistence and boss encounters.
-4. Add optional spell guidance, gameplay audio, and release-focused testing.
+3. Complete the Google Play production store listing, declarations, review requirements, and production rollout.
+4. Device-test local progress hydration, continuation, unlocks, and reinstall/data-clear behavior.
+5. Add optional spell guidance, gameplay audio, and release-focused testing.
