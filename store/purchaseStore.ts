@@ -31,6 +31,12 @@ export const usePurchaseStore = create<PurchaseState>((set, get) => ({
   ready: false, busy: false, package: null, priceText: null, appUserId: null, notice: null, error: null,
   initialize: async () => {
     if (Platform.OS !== 'android') { set({ ready: true }); return; }
+    // Expo Go has no native Play Billing store. Keep locally cached ownership for
+    // gameplay testing and initialize RevenueCat only in development/release builds.
+    if (Constants.expoGoConfig !== null) {
+      set({ ready: false, error: null });
+      return;
+    }
     const apiKey = Constants.expoConfig?.extra?.revenueCatAndroidApiKey
       ?? process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY;
     if (!apiKey) { set({ ready: false, error: 'Purchases are not configured in this build.' }); return; }

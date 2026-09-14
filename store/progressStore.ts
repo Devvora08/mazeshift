@@ -22,7 +22,7 @@ interface SavedProfile {
   highestUnlockedLevel: number;
   levels: Record<string, LevelRecord>;
   activeRun: ActiveRun | null;
-  settings: { audioEnabled: boolean; hapticsEnabled: boolean };
+  settings: { musicEnabled: boolean; soundEffectsEnabled: boolean; hapticsEnabled: boolean };
   /** Offline cache only. RevenueCat customer info remains the purchase source of truth. */
   premiumUnlocked: boolean;
 }
@@ -35,7 +35,8 @@ interface ProgressState extends SavedProfile {
   recordDeath: (levelId: number, elapsedMs: number) => void;
   completeLevel: (levelId: number, elapsedMs: number) => void;
   abandonRun: () => void;
-  setAudioEnabled: (enabled: boolean) => void;
+  setMusicEnabled: (enabled: boolean) => void;
+  setSoundEffectsEnabled: (enabled: boolean) => void;
   setHapticsEnabled: (enabled: boolean) => void;
   setPremiumUnlocked: (unlocked: boolean) => void;
 }
@@ -45,7 +46,7 @@ const defaultProfile: SavedProfile = {
   highestUnlockedLevel: 1,
   levels: {},
   activeRun: null,
-  settings: { audioEnabled: true, hapticsEnabled: true },
+  settings: { musicEnabled: true, soundEffectsEnabled: true, hapticsEnabled: true },
   premiumUnlocked: false,
 };
 
@@ -82,9 +83,16 @@ export const useProgressStore = create<ProgressState>((set, get) => {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) {
-          const saved = JSON.parse(raw) as Partial<SavedProfile>;
+          const saved = JSON.parse(raw) as Partial<SavedProfile> & {
+            settings?: Partial<SavedProfile['settings']> & { audioEnabled?: boolean };
+          };
+          const legacyAudio = saved.settings?.audioEnabled;
           set({ ...defaultProfile, ...saved,
-            settings: { ...defaultProfile.settings, ...saved.settings }, hydrated: true });
+            settings: {
+              musicEnabled: saved.settings?.musicEnabled ?? legacyAudio ?? true,
+              soundEffectsEnabled: saved.settings?.soundEffectsEnabled ?? legacyAudio ?? true,
+              hapticsEnabled: saved.settings?.hapticsEnabled ?? true,
+            }, hydrated: true });
           return;
         }
       } catch (error) {
@@ -125,7 +133,8 @@ export const useProgressStore = create<ProgressState>((set, get) => {
       });
     },
     abandonRun: () => commit({ activeRun: null }),
-    setAudioEnabled: enabled => commit({ settings: { ...get().settings, audioEnabled: enabled } }),
+    setMusicEnabled: enabled => commit({ settings: { ...get().settings, musicEnabled: enabled } }),
+    setSoundEffectsEnabled: enabled => commit({ settings: { ...get().settings, soundEffectsEnabled: enabled } }),
     setHapticsEnabled: enabled => commit({ settings: { ...get().settings, hapticsEnabled: enabled } }),
     setPremiumUnlocked: premiumUnlocked => commit({ premiumUnlocked }),
   };

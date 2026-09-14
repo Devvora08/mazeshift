@@ -6,6 +6,7 @@ import { DPad } from '../../components/DPad';
 import { SigilCanvas } from '../../components/SigilCanvas';
 import { WorldCanvas } from '../../components/WorldCanvas';
 import { PerformanceReadout } from '../../components/PerformanceReadout';
+import { GameAudio } from '../../components/GameAudio';
 import type { UtilityType } from '../../lib/modules/utilities';
 import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
@@ -190,6 +191,7 @@ export default function GameScreen() {
 
   return (
     <View className="flex-1 bg-paper px-4 pt-14">
+      <GameAudio heroRunning={isMoving || heldDir !== null} />
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
         {__DEV__ ? ' · PERF-4' : ''}

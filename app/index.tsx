@@ -2,6 +2,7 @@ import { Link } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { LEVELS } from '../lib/levels/data';
+import { MenuAudio } from '../components/MenuAudio';
 import { formatRunTime, useProgressStore } from '../store/progressStore';
 import { usePurchaseStore } from '../store/purchaseStore';
 
@@ -12,7 +13,8 @@ export default function Home() {
   const activeRun = useProgressStore((state) => state.activeRun);
   const settings = useProgressStore((state) => state.settings);
   const premiumUnlocked = useProgressStore((state) => state.premiumUnlocked);
-  const setAudioEnabled = useProgressStore((state) => state.setAudioEnabled);
+  const setMusicEnabled = useProgressStore((state) => state.setMusicEnabled);
+  const setSoundEffectsEnabled = useProgressStore((state) => state.setSoundEffectsEnabled);
   const setHapticsEnabled = useProgressStore((state) => state.setHapticsEnabled);
   const purchaseReady = usePurchaseStore((state) => state.ready);
   const purchaseBusy = usePurchaseStore((state) => state.busy);
@@ -24,6 +26,7 @@ export default function Home() {
   const restorePurchases = usePurchaseStore((state) => state.restorePurchases);
   return (
     <View className="flex-1 bg-paper px-8 pt-16">
+      <MenuAudio />
       <Text className="font-hand text-4xl text-ink">MazeShift</Text>
       <Text className="mt-2 font-script text-base text-ink-soft">
         The maze moves. Find the exit before it changes again.
@@ -77,8 +80,11 @@ export default function Home() {
         );})}
         <View className="mt-6 border-t border-ink/15 pt-4">
           <Text className="font-hand text-xl text-ink">Settings</Text>
-          <Pressable onPress={() => setAudioEnabled(!settings.audioEnabled)} className="py-2">
-            <Text className="font-script text-lg text-ink">Audio: {settings.audioEnabled ? 'On' : 'Off'}</Text>
+          <Pressable onPress={() => setMusicEnabled(!settings.musicEnabled)} className="py-2">
+            <Text className="font-script text-lg text-ink">Music: {settings.musicEnabled ? 'On' : 'Off'}</Text>
+          </Pressable>
+          <Pressable onPress={() => setSoundEffectsEnabled(!settings.soundEffectsEnabled)} className="py-2">
+            <Text className="font-script text-lg text-ink">Sound effects: {settings.soundEffectsEnabled ? 'On' : 'Off'}</Text>
           </Pressable>
           <Pressable onPress={() => setHapticsEnabled(!settings.hapticsEnabled)} className="py-2">
             <Text className="font-script text-lg text-ink">Vibration: {settings.hapticsEnabled ? 'On' : 'Off'}</Text>
