@@ -1,8 +1,61 @@
 # MazeShift — Project Progress
 
-Updated: 2026-09-13
+Updated: 2026-10-06
 
 This is a snapshot of the current source code and work completed so far. A feature listed in a level configuration is not necessarily implemented at runtime; those distinctions are recorded below.
+
+## 2026-10-06 session — failed enhancement attempt, reverted
+
+**Status: the implementation attempt was unsuccessful and was fully reverted to commit `12879c0` (Add Maze Shift privacy policy, September 16). The requests below are a record and future backlog, NOT implemented features in the restored source.** This update changes documentation only.
+
+The user reported that the closed-testing build had smooth movement, whereas this session introduced sticky held-direction movement and visual regressions. Several animation/rendering adjustments and partial restorations did not reliably resolve it. Removing the decorative home hero and animated levels map produced a user-reported return toward normal movement, but left/right stickiness, delayed wizard appearance and head clipping remained. This is evidence of a possible rendering/resource contribution, not a measured or confirmed single root cause. The user chose a complete rollback rather than more speculative fixes.
+
+All tracked edits and untracked files were preserved in the recovery stash named **Recovery before full rollback to 12879c0** (`stash@{0}` at rollback time; stash indices may change). This includes session code and untracked publishing assets. Do not automatically reapply the stash. Reintroduce individually approved changes in small steps, with device testing against the restored baseline after each change. Preserve smooth maze gameplay as the priority.
+
+### Requested gameplay changes
+
+- **Draw once to acquire, tap to activate:** keep standing on a charm and drawing its symbol to collect it. Do not require drawing it again to cast. Display the acquired spell icons below the maze and above the direction controller, supporting all six spells. Fill slots left to right in first-acquisition order within that level; show a count below an icon only when more than one charge is held. Tapping consumes/activates the spell with its existing effect, duration, collision and wall behavior unchanged.
+- **Monster growls by block:** monsters in the wizard's current maze block may growl regardless of distance. Remove the proximity condition for audio; monsters in other blocks should not trigger the current block's growls.
+- **Monsters stay in their own block:** prevent every monster type from crossing gateways into other maze blocks, during both patrol and pursuit. Keep wizard gateway travel intact. Existing abilities inside a block remain. The attempted implementation also kept Stalker alerts and search/patrol targets within the same block.
+- **Forward-route guidance:** originally requested purple pixie-dust sparkles at gateway openings that advance toward the level endpoint, excluding backward openings. The user later explicitly replaced this with a **static, semi-transparent purple glow** because of movement concerns. Any future implementation should use that revised static requirement, not animated particles.
+- **Accessible direction controller:** the spell row pushed the controller too low, making Down inaccessible. Move it up or resize it so all directions remain reachable, accounting for device safe areas. Avoid shrinking the maze unnecessarily.
+- **Centered maze blocks:** center the active block and hide fragments of neighboring blocks (especially the strip visible on the right). Retain the familiar maze/cell size; a centering change in this attempt accidentally reduced it.
+- **Smooth movement is mandatory:** sustained presses in every direction must remain as smooth as the baseline for the wizard and monsters. Avoid pauses at cell boundaries, wobble, sprite crop jumps and layout shifts. Check left/right sheet counts and frame alignment specifically; the current sheets each have five frames. Do not change the engine speculatively to compensate for decorative UI cost.
+- **Immediate wizard visibility:** investigate the reported 5–7 second delay before the wizard appears on level load. Image preloading/caching was attempted but reverted; its benefit was not confirmed on-device.
+- **No head clipping:** ensure the wizard's head remains visible on the top maze row and above maze walls, with adequate render headroom and no unnecessary reduction in maze size.
+
+### Requested opening/home UI
+
+- Introduce a neat opening/hero screen and improve the entire home layout and navigation.
+- Fix the animated hero poster's cropping: fragments of adjacent sprite frames appeared on both sides.
+- Make the purple ambient circle cover the **whole poster, including the rock/artwork**, rather than only the wizard.
+- Place **Audio On/Off, How to play, and Levels** directly beneath the hero artwork as three distinct buttons: transparent backgrounds, visible borders and sufficient separation. The user repeatedly clarified that these belong on the first opening screen and that the borders must actually be visible.
+- Make the Levels destination obvious and make ongoing campaign progress/Continue accessible from the home screen. Keep navigation between home, levels and gameplay clear.
+- Update instructions to explain draw-to-collect and tap-to-cast if that gameplay change is reintroduced.
+
+### Requested levels and guide UI
+
+- Replace the confusing levels page using the supplied reference image, **Mystical Levels Map_ Fire to Forest.png**, as visual guidance.
+- Use a lighter background than the reference's dark grey, a simple game-like layout, and modest SVG-style maze doodles.
+- Connect numbered levels with a slightly wobbly, curved ink route rather than a straight line. Animate purple illumination from level A to level B when completion unlocks progression. Include animated fiery rings around level markers; the reference also transitions from fire to green/forest styling.
+- Keep existing progress, sequential locks, Practice, premium access, settings, purchase and restore flows available throughout the redesign.
+- Redesign the charms/monsters guide to feel more like a game and less like an information panel. Remove individual boxed component layouts and boundaries; let the artwork and content sit directly on the screen.
+- **Latest preference supersedes the decorative requests:** after persistent movement problems, the user asked to undo the home hero animation and effects-heavy levels presentation, emphasizing that the maze is the core game. A simple home and plain numbered levels list was tried before the full rollback. Keep the earlier visual requests here for history, but do not revive animations, fiery rings or animated trails without renewed user approval and device performance validation.
+
+### Audio, progress and development follow-ups from the attempt
+
+- Fix the console error in GameAudio concerning rejected `AudioPlayer.pause` calls. The attempted fix avoided cleanup calls on already-released audio players and cancelled pending replay work. It was reverted with everything else, so the restored version may retain that issue.
+- Preserve separate music and sound-effect settings and functioning gameplay audio while changing the home audio control.
+- Additional fixes made during the attempt, also reverted: back/leave confirmation behavior, protection against stale progress/checkpoint writes, and invalid zero best-time records. These were supporting implementation work, not all separate user requests; review them independently before reuse.
+- Restart Expo correctly after changes. The user repeatedly requested a complete shutdown/restart and eventually a cleared Metro cache rather than relying on Fast Refresh. Verify the Android launch manifest, not only the server status endpoint. Fully reopen Expo Go for comparisons involving startup, cached images or retained screens.
+- The user offered before/after videos for comparison, then chose rollback before providing them. No video-based analysis or measured device frame-rate diagnosis was completed.
+
+### Closed-testing context and rollback verification
+
+- Google denied production access and required at least 12 opted-in testers for **14 additional days starting from the review date**, with meaningful engagement and feedback. The user wanted to use that additional testing period for game enhancements and asked whether an updated closed-test build could be published. No new Play Store build or production submission was made in this session.
+- The restored baseline includes the existing maze engine, original home/level selector, gesture acquisition and casting, cross-block monsters, persistent progression, full-game purchases, game audio/settings, and the privacy policy. Commit `12879c0` itself only added the privacy-policy page; the gameplay/audio features come from earlier commits.
+- After rollback, Git was clean, TypeScript passed, and all **32 baseline gameplay/monster checks** passed. Expo was stopped and restarted with a cleared cache, and the Android launch manifest returned HTTP 200. These checks do not prove device smoothness or identify the exact commit used by Google Play's closed-testing artifact.
+- Earlier sections below describe the historical baseline and may contain older status notes (for example, unfinished audio). This dated session record explicitly distinguishes reverted requests from current implementation.
 
 ## Current state
 
