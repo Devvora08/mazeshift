@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { UNLOCK_ALL_LEVELS } from '../lib/devUnlock';
+import { needsPurchase } from '../lib/paywall';
 import { useProgressStore } from '../store/progressStore';
 
 const PAPER = require('../assets/home_paper.jpg');
@@ -70,7 +70,7 @@ export default function Home() {
   };
 
   const nextLevel = Math.min(20, Math.max(1, highestUnlockedLevel));
-  const nextNeedsPurchase = !UNLOCK_ALL_LEVELS && nextLevel > 10 && !premiumUnlocked;
+  const nextNeedsPurchase = needsPurchase(nextLevel, premiumUnlocked);
   const play = () => {
     if (activeRun) {
       router.push({ pathname: '/game/[id]', params: { id: String(activeRun.levelId), resume: '1' } });

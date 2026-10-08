@@ -13,6 +13,7 @@ import { PatrickHand_400Regular } from '@expo-google-fonts/patrick-hand';
 import { CinzelDecorative_900Black } from '@expo-google-fonts/cinzel-decorative';
 import { useProgressStore } from '../store/progressStore';
 import { usePurchaseStore } from '../store/purchaseStore';
+import { PAYWALL_ENABLED } from '../lib/paywall';
 import { MenuAudio } from '../components/MenuAudio';
 import { preloadSpriteImages } from '../lib/sprites/imageCache';
 
@@ -33,7 +34,7 @@ export default function RootLayout() {
   useEffect(() => { preloadSpriteImages(); }, []);
   useEffect(() => { void hydrate(); }, [hydrate]);
   useEffect(() => {
-    if (progressHydrated) void initializePurchases();
+    if (progressHydrated && PAYWALL_ENABLED) void initializePurchases();
   }, [initializePurchases, progressHydrated]);
 
   if (!fontsLoaded && !fontError) return null;

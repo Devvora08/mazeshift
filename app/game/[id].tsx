@@ -15,6 +15,7 @@ import { useGameStore } from '../../store/gameStore';
 import { formatRunTime, useProgressStore } from '../../store/progressStore';
 import { UNLOCK_ALL_LEVELS } from '../../lib/devUnlock';
 import { screenOwnsRun } from '../../lib/runGuard';
+import { needsPurchase } from '../../lib/paywall';
 import { count, measure } from '../../lib/perfProbe';
 import { useDisabledFlags } from '../../lib/perfFlags';
 
@@ -112,7 +113,7 @@ export default function GameScreen() {
     const key = `${levelId}:${resume ?? ''}`;
     if (loadedKey.current === key) return;
     const progress = useProgressStore.getState();
-    if (!UNLOCK_ALL_LEVELS && (levelId > progress.highestUnlockedLevel || (levelId > 10 && !progress.premiumUnlocked))) return;
+    if ((!UNLOCK_ALL_LEVELS && levelId > progress.highestUnlockedLevel) || needsPurchase(levelId, progress.premiumUnlocked)) return;
     const continued = resume === '1' && progress.activeRun?.levelId === levelId;
     baseElapsed.current = continued ? progress.activeRun!.elapsedMs : 0;
     loadLevel(levelId);
@@ -123,7 +124,7 @@ export default function GameScreen() {
   }, [levelId, resume, loadLevel, progressHydrated, premiumUnlocked]);
 
   useEffect(() => {
-    if (!UNLOCK_ALL_LEVELS && progressHydrated && (levelId > highestUnlockedLevel || (levelId > 10 && !premiumUnlocked))) router.dismissTo('/levels');
+    if (progressHydrated && ((!UNLOCK_ALL_LEVELS && levelId > highestUnlockedLevel) || needsPurchase(levelId, premiumUnlocked))) router.dismissTo('/levels');
   }, [progressHydrated, highestUnlockedLevel, premiumUnlocked, levelId]);
 
   useEffect(() => {
@@ -233,7 +234,7 @@ export default function GameScreen() {
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
         {__DEV__ ? ' · PERF-4' : ''}
-        {UNLOCK_ALL_LEVELS ? ' · test build B19' : ''}
+        {UNLOCK_ALL_LEVELS ? ' · test build B20' : ''}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {caughtBy

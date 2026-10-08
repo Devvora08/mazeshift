@@ -7,6 +7,7 @@ import { LEVELS } from '../lib/levels/data';
 import { formatRunTime, useProgressStore } from '../store/progressStore';
 import { usePurchaseStore } from '../store/purchaseStore';
 import { UNLOCK_ALL_LEVELS } from '../lib/devUnlock';
+import { FREE_LEVELS, PAYWALL_ENABLED, needsPurchase as levelNeedsPurchase } from '../lib/paywall';
 
 export default function Levels() {
   const hydrated = useProgressStore((state) => state.hydrated);
@@ -30,7 +31,7 @@ export default function Levels() {
 
   const cells: LevelCell[] = LEVELS.map((level) => {
     // Local Expo development unlocks access without changing saved progress or purchases.
-    const needsPurchase = !UNLOCK_ALL_LEVELS && level.id > 10 && !premiumUnlocked;
+    const needsPurchase = levelNeedsPurchase(level.id, premiumUnlocked);
     const locked = !hydrated || (!UNLOCK_ALL_LEVELS && level.id > highestUnlockedLevel) || needsPurchase;
     const record = records[String(level.id)];
     const state = locked ? 'locked' : activeRun?.levelId === level.id ? 'ongoing'
@@ -53,10 +54,10 @@ export default function Levels() {
             Practice — try out spells
           </Text>
         </Link>
-        {!UNLOCK_ALL_LEVELS && hydrated && highestUnlockedLevel >= 11 && !premiumUnlocked && (
+        {PAYWALL_ENABLED && !UNLOCK_ALL_LEVELS && hydrated && highestUnlockedLevel > FREE_LEVELS && !premiumUnlocked && (
           <View className="mb-3 rounded-xl border border-spell-phase p-4">
             <Text className="font-hand text-2xl text-ink">Unlock the full game</Text>
-            <Text className="mt-1 font-script text-base text-ink-soft">Levels 11–20 and future MazeShift campaign levels.</Text>
+            <Text className="mt-1 font-script text-base text-ink-soft">Levels {FREE_LEVELS + 1} and beyond, plus future MazeShift campaign levels.</Text>
             <Pressable disabled={!purchaseReady || purchaseBusy} onPress={() => void purchaseFullGame()}
               className="mt-3 rounded-xl bg-ink px-4 py-3">
               <Text className="text-center font-hand text-xl text-paper">
@@ -83,6 +84,7 @@ export default function Levels() {
           <Pressable onPress={() => setHapticsEnabled(!settings.hapticsEnabled)} className="py-2">
             <Text className="font-script text-lg text-ink">Vibration: {settings.hapticsEnabled ? 'On' : 'Off'}</Text>
           </Pressable>
+          {PAYWALL_ENABLED && <>
           <Pressable disabled={!purchaseReady || purchaseBusy} onPress={() => void restorePurchases()} className="py-2">
             <Text className="font-script text-lg text-ink">
               {purchaseBusy ? 'Checking purchases…' : 'Restore purchase'}
@@ -95,6 +97,7 @@ export default function Levels() {
               Purchase support ID: {purchaseAppUserId}
             </Text>
           )}
+          </>}
         </View>
       </ScrollView>
     </View>

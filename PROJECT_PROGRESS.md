@@ -25,6 +25,14 @@ All items device-tested by the user in Expo Go (release-mode test server) and ap
 - **End-of-run panel:** Next level / Try again / Back to levels in one full-width row with identical solid buttons (fixed 18 px labels, wrap rather than shrink), so Back to levels is always reachable.
 - **Styling gotcha:** style functions and some layout classes on a NativeWind `Pressable` were silently dropped (no borders, no padding). Put visual styling on an inner `View` with explicit styles, as `HomeButton`, `EndButton` and the level boxes do.
 
+### Paywall switched off for this release
+
+- **All 20 levels are free** in this release; the purchase system is kept for the next pack (planned: levels 21–40 for about US$1.50).
+- Single switch in `lib/paywall.ts`: `PAYWALL_ENABLED = false`, `FREE_LEVELS = 20`. Every paywall check (levels grid, game-screen access guard, home Continue/Play, purchase SDK start in `app/_layout.tsx`) goes through `needsPurchase()`. While off: no RevenueCat start, no unlock card, no Restore purchase in settings; levels still unlock one by one through progression.
+- To bring it back: set `PAYWALL_ENABLED = true` and point the RevenueCat offering at the new pack. `store/purchaseStore.ts`, `react-native-purchases` and the `revenueCatAndroidApiKey` in `app.json` are intact. The unlock card text follows `FREE_LEVELS` ("Levels 21 and beyond").
+- Not visible on the test server (test mode unlocks everything); first visible in a real build. `test:progress` pins that levels 1–20 need no purchase while the switch is off.
+- Play Console follow-ups (user): testers who already bought the full game keep their recorded purchase; decide whether to deactivate the current "full game" product until the new pack (an active product may keep the "Contains in-app purchases" label).
+
 ### Remaining backlog
 
 - Real release build check on a device before the next closed-test upload (all testing so far was Expo Go release mode).

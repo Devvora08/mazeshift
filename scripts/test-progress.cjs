@@ -97,5 +97,11 @@ const saved = () => JSON.parse(disk.get(KEY));
     assert.equal(store.getState().activeRun, null, 'a finished run is never revived by a late checkpoint');
   });
 
+  await test('all 20 shipped levels are free; the paywall is off for this release', () => {
+    const { PAYWALL_ENABLED, FREE_LEVELS, needsPurchase } = require('../lib/paywall.ts');
+    assert.equal(PAYWALL_ENABLED, false); assert(FREE_LEVELS >= 20);
+    for (let id = 1; id <= 20; id++) assert.equal(needsPurchase(id, false), false);
+  });
+
   console.log(checks + ' progress checks passed.');
 })().catch(error => { console.error(error); process.exit(1); });
