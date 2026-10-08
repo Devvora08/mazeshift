@@ -84,9 +84,11 @@ const costOf = (link: Link, mobility: Mobility) => link.wall && mobility === 'wa
 /** Reverse Dijkstra fields are shared by all pursuers with the same target/ability.
  * Gateway hops cost one step; a world-space Manhattan heuristic would be incorrect
  * for these links. A binary heap keeps large, multi-block searches O(E log V).
+ * `confined` keeps the search inside the target's block by skipping gateway hops.
  */
-export function distanceField(world: MazeWorld, target: WorldCell, mobility: Mobility): Map<string, number> {
-  const graph = graphFor(world), key = `${mobility}:${cellKey(target)}`;
+export function distanceField(world: MazeWorld, target: WorldCell, mobility: Mobility,
+  confined = false): Map<string, number> {
+  const graph = graphFor(world), key = `${confined ? 'block:' : ''}${mobility}:${cellKey(target)}`;
   const cached = graph.fields.get(key);
   if (cached) return cached;
   const distances = new Map<string, number>();
@@ -98,6 +100,7 @@ export function distanceField(world: MazeWorld, target: WorldCell, mobility: Mob
     const current = heap.pop();
     if (current.cost !== distances.get(current.key)) continue;
     for (const link of graph.links.get(current.key) ?? []) {
+      if (confined && graph.cells.get(link.to)!.blockId !== target.blockId) continue;
       const cost = current.cost + costOf(link, mobility);
       if (cost >= (distances.get(link.to) ?? Infinity)) continue;
       distances.set(link.to, cost); heap.push({ key: link.to, cost });
@@ -109,15 +112,17 @@ export function distanceField(world: MazeWorld, target: WorldCell, mobility: Mob
   return distances;
 }
 
-export function nextStep(world: MazeWorld, from: WorldCell, target: WorldCell, mobility: Mobility): Link | null {
+export function nextStep(world: MazeWorld, from: WorldCell, target: WorldCell, mobility: Mobility,
+  confined = false): Link | null {
   if (sameCell(from, target)) return null;
-  const field = distanceField(world, target, mobility);
+  const field = distanceField(world, target, mobility, confined);
   let best: Link | null = null, bestCost = Infinity, bestDisplacement = Infinity;
   const graph = graphFor(world);
   const targetBlock = world.blocks.find(b => b.id === target.blockId)!;
   for (const link of graphFor(world).links.get(cellKey(from)) ?? []) {
     const cost = costOf(link, mobility) + (field.get(link.to) ?? Infinity);
     const candidate = graph.cells.get(link.to)!;
+    if (confined && candidate.blockId !== from.blockId) continue;
     const block = world.blocks.find(b => b.id === candidate.blockId)!;
     const displacement = (block.worldOffsetX + candidate.cell.x - targetBlock.worldOffsetX - target.cell.x) ** 2
       + (block.worldOffsetY + candidate.cell.y - targetBlock.worldOffsetY - target.cell.y) ** 2;

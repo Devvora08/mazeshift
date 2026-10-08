@@ -17,7 +17,6 @@ export function MenuAudio() {
   useEffect(() => {
     if (enabled && isFocused) player.play();
     else player.pause();
-    return () => player.pause();
   }, [enabled, isFocused, player]);
 
   return null;

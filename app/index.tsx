@@ -5,6 +5,7 @@ import { LEVELS } from '../lib/levels/data';
 import { MenuAudio } from '../components/MenuAudio';
 import { formatRunTime, useProgressStore } from '../store/progressStore';
 import { usePurchaseStore } from '../store/purchaseStore';
+import { UNLOCK_ALL_LEVELS } from '../lib/devUnlock';
 
 export default function Home() {
   const hydrated = useProgressStore((state) => state.hydrated);
@@ -45,7 +46,7 @@ export default function Home() {
             Practice — try out spells
           </Text>
         </Link>
-        {hydrated && highestUnlockedLevel >= 11 && !premiumUnlocked && (
+        {!UNLOCK_ALL_LEVELS && hydrated && highestUnlockedLevel >= 11 && !premiumUnlocked && (
           <View className="mb-3 rounded-xl border border-spell-phase p-4">
             <Text className="font-hand text-2xl text-ink">Unlock the full game</Text>
             <Text className="mt-1 font-script text-base text-ink-soft">Levels 11–20 and future MazeShift campaign levels.</Text>
@@ -62,8 +63,9 @@ export default function Home() {
           </View>
         )}
         {LEVELS.map((level) => {
-          const needsPurchase = level.id > 10 && !premiumUnlocked;
-          const locked = !hydrated || level.id > highestUnlockedLevel || needsPurchase;
+          // Local Expo development unlocks access without changing saved progress or purchases.
+          const needsPurchase = !UNLOCK_ALL_LEVELS && level.id > 10 && !premiumUnlocked;
+          const locked = !hydrated || (!UNLOCK_ALL_LEVELS && level.id > highestUnlockedLevel) || needsPurchase;
           const record = records[String(level.id)];
           return (
           <Link

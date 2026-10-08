@@ -16,19 +16,20 @@ export function spawnMonsters(world: MazeWorld, types: MonsterType[]): Monster[]
     candidates.sort((a, b) => fromExit.get(cellKey(a))! - fromExit.get(cellKey(b))!);
     const location = candidates[0];
     if (!location) return [];
-    return [{ id: `monster-${index}`, type: types[index % types.length], location, facing: 'down' as const,
+    return [{ id: `monster-${index}`, type: types[index % types.length], location, homeBlockId: block.id, facing: 'down' as const,
       travel: null, bomb: null, blast: null, mode: 'roam' as const, lastKnown: null,
       patrolTarget: null, patrolSequence: index }];
   });
 }
 
-function patrol(world: MazeWorld, monster: Monster): WorldCell | null {
+function patrol(world: MazeWorld, monster: Monster, confined: boolean): WorldCell | null {
   // Choose a reachable destination, favoring a meaningful walk over a one-cell oscillation.
-  const field = distanceField(world, monster.location, 'walk');
+  const field = distanceField(world, monster.location, 'walk', confined);
   const candidates = [...graphFor(world).cells.values()].filter(p => p.blockId === monster.location.blockId
     && (field.get(cellKey(p)) ?? Infinity) >= 4 && (field.get(cellKey(p)) ?? Infinity) <= 12);
   if (!candidates.length) {
-    const link = (graphFor(world).links.get(cellKey(monster.location)) ?? []).find(l => !l.wall);
+    const link = (graphFor(world).links.get(cellKey(monster.location)) ?? []).find(l => !l.wall
+      && (!confined || graphFor(world).cells.get(l.to)!.blockId === monster.homeBlockId));
     return link ? graphFor(world).cells.get(link.to)! : null;
   }
   return candidates[((monster.patrolSequence + 1) * 37) % candidates.length];
@@ -48,11 +49,20 @@ export function breakWall(world: MazeWorld, from: WorldCell, to: WorldCell): Maz
   return { ...world, blocks };
 }
 
-export function tickMonsters(world: MazeWorld, monsters: Monster[], hero: WorldCell, now: number) {
+export interface MonsterRules {
+  /** Mirrors LevelConfig.monstersCrossBlocks; confinement is the default. */
+  crossBlocks?: boolean;
+}
+
+export function tickMonsters(world: MazeWorld, monsters: Monster[], hero: WorldCell, now: number,
+  rules: MonsterRules = {}) {
   if (!monsters.length) return { world, monsters, alert: false };
+  const confined = !rules.crossBlocks;
+  // A confined monster can only reach its home block, so it only senses a hero there.
+  const inReach = (m: Monster) => !confined || hero.blockId === m.homeBlockId;
   const distances = detectionDistances(world, hero);
   const spots = (m: Monster) => {
-    if ((m.stunnedUntil ?? 0) > now) return false;
+    if ((m.stunnedUntil ?? 0) > now || !inReach(m)) return false;
     if (!m.travel) return (distances.get(cellKey(m.location)) ?? Infinity) <= TRACK_RADIUS[m.type];
     const p = progress(m.travel, now);
     // Distance along the current edge: no one-cell jumps in detection at arrival.
@@ -60,14 +70,16 @@ export function tickMonsters(world: MazeWorld, monsters: Monster[], hero: WorldC
       (distances.get(cellKey(m.travel.to)) ?? Infinity) + 1 - p);
     return distance <= TRACK_RADIUS[m.type];
   };
+  // Confined, a Stalker's alert reaches only monsters homed in the hero's block.
   const alert = monsters.some(m => m.type === 'stalker' && spots(m));
+  const alerted = (m: Monster) => alert && inReach(m);
   let nextWorld = world;
   const next = monsters.map(original => {
     let m = original;
     const change = (patch: Partial<Monster>) => { m = { ...m, ...patch }; };
     if (m.blast && now >= m.blast.until) change({ blast: null });
     if ((m.stunnedUntil ?? 0) > now) return m;
-    const detected = alert || spots(m);
+    const detected = alerted(m) || spots(m);
     if (detected && (!m.lastKnown || !sameCell(m.lastKnown, hero))) change({ lastKnown: hero, patrolTarget: null });
     const intent = m.bomb ? 'bomb' : detected ? 'chase' : m.lastKnown ? 'search' : 'roam';
     if (m.mode !== intent) change({ mode: intent });
@@ -84,16 +96,21 @@ export function tickMonsters(world: MazeWorld, monsters: Monster[], hero: WorldC
     if (m.lastKnown && sameCell(m.location, m.lastKnown) && !detected) change({ lastKnown: null });
     const mode = detected ? 'chase' : m.lastKnown ? 'search' : 'roam';
     if (m.mode !== mode) change({ mode });
+    // Targets outside the home block are unreachable for a confined monster.
+    if (confined && m.lastKnown && m.lastKnown.blockId !== m.homeBlockId) change({ lastKnown: null, mode: 'roam' });
+    if (confined && m.patrolTarget && m.patrolTarget.blockId !== m.homeBlockId) change({ patrolTarget: null });
     if (!m.lastKnown && (!m.patrolTarget || sameCell(m.location, m.patrolTarget))) {
-      change({ patrolTarget: patrol(nextWorld, m), patrolSequence: m.patrolSequence + 1 });
+      change({ patrolTarget: patrol(nextWorld, m, confined), patrolSequence: m.patrolSequence + 1 });
     }
     const target = m.lastKnown ?? m.patrolTarget;
-    let link = target ? nextStep(nextWorld, m.location, target, m.lastKnown ? mobilityFor(m.type) : 'walk') : null;
+    let link = target ? nextStep(nextWorld, m.location, target, m.lastKnown ? mobilityFor(m.type) : 'walk', confined) : null;
     if (!link && target && !sameCell(m.location, target)) {
       // A scramble can isolate the old target. Roam within the reachable component.
-      change({ lastKnown: null, patrolTarget: patrol(nextWorld, m), patrolSequence: m.patrolSequence + 1, mode: 'roam' });
-      link = m.patrolTarget ? nextStep(nextWorld, m.location, m.patrolTarget, 'walk') : null;
+      change({ lastKnown: null, patrolTarget: patrol(nextWorld, m, confined), patrolSequence: m.patrolSequence + 1, mode: 'roam' });
+      link = m.patrolTarget ? nextStep(nextWorld, m.location, m.patrolTarget, 'walk', confined) : null;
     }
+    // Final guard: whatever chose the step, a confined monster never leaves home.
+    if (link && confined && graphFor(nextWorld).cells.get(link.to)!.blockId !== m.homeBlockId) link = null;
     if (link) {
       const to = graphFor(nextWorld).cells.get(link.to)!;
       change({ facing: link.direction });

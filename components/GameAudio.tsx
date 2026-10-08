@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useAudioPlayer, useAudioPlayerStatus, type AudioPlayer } from 'expo-audio';
 
 import { useGameStore } from '../store/gameStore';
@@ -7,19 +7,14 @@ import { useProgressStore } from '../store/progressStore';
 const GAME_MUSIC_GAP_MS = 3000;
 const SCRAMBLE_WARNING_MS = 5000;
 
-function replay(player: AudioPlayer) {
-  void player.seekTo(0).then(() => player.play());
-}
-
-export function GameAudio({ heroRunning }: { heroRunning: boolean }) {
+export const GameAudio = memo(function GameAudio({ heroRunning }: { heroRunning: boolean }) {
   const musicEnabled = useProgressStore((state) => state.settings.musicEnabled);
   const soundEffectsEnabled = useProgressStore((state) => state.settings.soundEffectsEnabled);
   const nextScrambleAt = useGameStore((state) => state.nextScrambleAt);
   const scrambleFlashUntil = useGameStore((state) => state.scrambleFlashUntil);
-  const nearbyMonster = useGameStore((state) => state.heroCell !== null && state.currentBlockId !== null
-    && state.monsters.some((monster) => monster.location.blockId === state.currentBlockId
-      && Math.abs(monster.location.cell.x - state.heroCell!.x)
-        + Math.abs(monster.location.cell.y - state.heroCell!.y) <= 4));
+  // Any monster in the hero's block growls, regardless of distance.
+  const nearbyMonster = useGameStore((state) => state.currentBlockId !== null
+    && state.monsters.some((monster) => monster.location.blockId === state.currentBlockId));
   const caughtBy = useGameStore((state) => state.caughtBy);
   const reachedExit = useGameStore((state) => state.reachedExit);
   const paused = useGameStore((state) => state.paused);
@@ -37,6 +32,29 @@ export function GameAudio({ heroRunning }: { heroRunning: boolean }) {
   const previousScramble = useRef<number | null>(null);
   const deathPlayedForRun = useRef<number | null>(null);
   const winPlayedForRun = useRef<number | null>(null);
+  const playbackGeneration = useRef(0);
+  const gameplayActive = !paused && !caughtBy && !reachedExit;
+  const musicActive = musicEnabled && gameplayActive;
+  const effectsActive = soundEffectsEnabled && gameplayActive;
+
+  // Cancel pending seek completions on unmount, player replacement, or playback changes.
+  // useAudioPlayer owns native disposal; cleanup must not call a released player.
+  useEffect(() => {
+    playbackGeneration.current += 1;
+    return () => { playbackGeneration.current += 1; };
+  }, [music, footsteps, timer, scramble, grunt, lose, win, musicActive, effectsActive, runId]);
+
+  const replay = useCallback((player: AudioPlayer) => {
+    const generation = playbackGeneration.current;
+    void (async () => {
+      try {
+        await player.seekTo(0);
+        if (generation === playbackGeneration.current) player.play();
+      } catch (error) {
+        if (generation === playbackGeneration.current) console.warn('Could not replay game audio', error);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     music.loop = false; music.volume = 0.10;
@@ -48,21 +66,16 @@ export function GameAudio({ heroRunning }: { heroRunning: boolean }) {
     win.volume = 0.32;
   }, [music, footsteps, timer, scramble, grunt, lose, win]);
 
-  const gameplayActive = !paused && !caughtBy && !reachedExit;
-  const musicActive = musicEnabled && gameplayActive;
-  const effectsActive = soundEffectsEnabled && gameplayActive;
-
   useEffect(() => {
     if (musicActive) music.play();
     else music.pause();
-    return () => music.pause();
   }, [musicActive, music]);
 
   useEffect(() => {
     if (!musicStatus.didJustFinish || !musicActive) return;
     const timeout = setTimeout(() => replay(music), GAME_MUSIC_GAP_MS);
     return () => clearTimeout(timeout);
-  }, [musicStatus.didJustFinish, musicActive, music]);
+  }, [musicStatus.didJustFinish, musicActive, music, replay]);
 
   useEffect(() => {
     if (effectsActive && heroRunning) footsteps.play();
@@ -87,9 +100,9 @@ export function GameAudio({ heroRunning }: { heroRunning: boolean }) {
       && scrambleFlashUntil !== previousScramble.current
       && soundEffectsEnabled && !paused) replay(scramble);
     previousScramble.current = scrambleFlashUntil;
-  }, [scrambleFlashUntil, soundEffectsEnabled, paused, scramble]);
+  }, [scrambleFlashUntil, soundEffectsEnabled, paused, scramble, replay]);
 
-  const playGrunt = useCallback(() => replay(grunt), [grunt]);
+  const playGrunt = useCallback(() => replay(grunt), [grunt, replay]);
   useEffect(() => {
     if (!effectsActive || !nearbyMonster) return;
     let timeout: ReturnType<typeof setTimeout>;
@@ -108,14 +121,14 @@ export function GameAudio({ heroRunning }: { heroRunning: boolean }) {
       deathPlayedForRun.current = runId;
       replay(lose);
     }
-  }, [soundEffectsEnabled, caughtBy, runId, lose]);
+  }, [soundEffectsEnabled, caughtBy, runId, lose, replay]);
 
   useEffect(() => {
     if (soundEffectsEnabled && reachedExit && winPlayedForRun.current !== runId) {
       winPlayedForRun.current = runId;
       replay(win);
     }
-  }, [soundEffectsEnabled, reachedExit, runId, win]);
+  }, [soundEffectsEnabled, reachedExit, runId, win, replay]);
 
   useEffect(() => {
     if (!soundEffectsEnabled) {
@@ -123,9 +136,5 @@ export function GameAudio({ heroRunning }: { heroRunning: boolean }) {
     }
   }, [soundEffectsEnabled, footsteps, timer, scramble, grunt, lose, win]);
 
-  useEffect(() => () => {
-    music.pause(); footsteps.pause(); timer.pause(); scramble.pause(); grunt.pause(); lose.pause(); win.pause();
-  }, [music, footsteps, timer, scramble, grunt, lose, win]);
-
   return null;
-}
+});

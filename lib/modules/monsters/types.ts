@@ -9,6 +9,8 @@ export interface Monster {
   id: string;
   type: MonsterType;
   location: WorldCell;
+  /** Spawn block; a confined monster may never occupy or travel outside it. */
+  homeBlockId: string;
   facing: Direction;
   travel: Travel | null;
   bomb: { target: WorldCell; startedAt: number; detonatesAt: number } | null;

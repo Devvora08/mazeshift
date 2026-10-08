@@ -14,6 +14,12 @@ export interface LevelConfig {
   blocks: BlockPlan[];
   scramble: ScrambleConfig;
   monsters: MonsterType[];
+  /**
+   * When false or omitted, every monster is confined to the block it spawned in:
+   * it never paths through a gateway, senses only a hero inside its block, and
+   * Stalker alerts reach only that block. Set true to let monsters roam the world.
+   */
+  monstersCrossBlocks?: boolean;
   utilities: UtilityType[];
   inventoryCap: number;
 }

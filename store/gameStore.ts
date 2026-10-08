@@ -227,7 +227,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       return;
     }
     const sensedHero = s.heroTravel && now < s.heroTravel.startedAt + s.heroTravel.duration / 2 ? s.heroTravel.from : hero;
-    const result = tickMonsters(s.world, trapped.monsters, sensedHero, now);
+    const result = tickMonsters(s.world, trapped.monsters, sensedHero, now,
+      { crossBlocks: s.level?.monstersCrossBlocks });
     set({ simulationTime: now, world: result.world, monsters: result.monsters, traps: trapped.traps, stalkerAlert: result.alert });
   },
 

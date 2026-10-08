@@ -6,8 +6,11 @@ import type { Monster, WorldCell } from '../lib/modules/monsters';
 import type { MazeWorld } from '../lib/maze/world';
 import { MONSTER_SHEETS } from '../lib/sprites/monsterFrames';
 import { useCachedImage } from '../lib/sprites/imageCache';
+import { UNLOCK_ALL_LEVELS } from '../lib/devUnlock';
 import { useGameStore } from '../store/gameStore';
 
+// Test builds only: home block 1 red, 2 blue, 3 green, 4 yellow, 5 purple, then repeating.
+const HOME_COLORS = ['#dc2626', '#2563eb', '#16a34a', '#eab308', '#9333ea'];
 const HEIGHT = { hunter: 1.8, wraith: 1.65, brute: 1.8, stalker: 1.8 };
 
 function worldPoint(world: MazeWorld, p: WorldCell, size: number) {
@@ -95,6 +98,8 @@ export const MonsterSprite = memo(function MonsterSprite({ monster, world, cellS
     {monster.mode === 'stunned' && <Circle cx={x} cy={ringY}
       r={cellSize * 0.65} color="#ef4444" style="stroke" strokeWidth={3} />}
     {image && <Atlas image={image} sprites={sprites} transforms={transforms} />}
+    {UNLOCK_ALL_LEVELS && <Circle cx={x} cy={y} r={cellSize * 0.18}
+      color={HOME_COLORS[Math.max(0, world.blocks.findIndex(b => b.id === monster.homeBlockId)) % HOME_COLORS.length]} />}
     <BombEffect monster={monster} world={world} cellSize={cellSize} paused={paused} />
   </>;
 });

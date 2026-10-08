@@ -15,6 +15,7 @@ const { spawnMonsters, tickMonsters, touches, breakWall } = require('../lib/modu
 const { cellKey, sameCell, graphFor, nextStep, distanceField, detectionDistances, TRACK_RADIUS, MONSTER_STEP_MS, BOMB_FUSE_MS } = require('../lib/modules/monsters/navigation.ts');
 const { MONSTER_SHEETS } = require('../lib/sprites/monsterFrames.ts');
 const { useGameStore } = require('../store/gameStore.ts');
+const CROSS = { crossBlocks: true };
 let checks = 0;
 function test(name, fn) { fn(); checks++; console.log(`PASS ${name}`); }
 const p = (x, y = 0, blockId = 'b0') => ({ blockId, cell: { x, y } });
@@ -32,7 +33,7 @@ function fixture(width, height = 1, open = true) {
   return world;
 }
 function monster(type, location, id = type) {
-  return { id, type, location, facing: 'down', travel: null, bomb: null, blast: null,
+  return { id, type, location, homeBlockId: location.blockId, facing: 'down', travel: null, bomb: null, blast: null,
     mode: 'roam', lastKnown: null, patrolTarget: null, patrolSequence: 0 };
 }
 function travel(from, to, startedAt = 0, duration = 400) { return { from, to, startedAt, duration }; }
@@ -116,19 +117,43 @@ test('distinct radius boundaries; all four types have identical step duration', 
   }
 });
 
-test('Stalker broadcasts across blocks, releases outside radius, no live tracking after loss', () => {
+test('Stalker alerts only its own block, releases when hero leaves, no live tracking after loss', () => {
   const world = generateWorld(LEVELS[13].blocks, 453);
   const hero = { blockId: world.startBlockId, cell: world.blocks[0].maze.start };
+  const sameBlock = { blockId: world.startBlockId, cell: world.blocks[0].maze.end };
   const far = { blockId: world.endBlockId, cell: world.blocks.at(-1).maze.end };
-  let result = tickMonsters(world, [monster('stalker', hero), monster('wraith', far)], hero, 0);
+  let result = tickMonsters(world,
+    [monster('stalker', hero), monster('wraith', sameBlock), monster('hunter', far)], hero, 0);
   assert(result.alert);
   assert.deepEqual(result.monsters[1].lastKnown, hero);
+  assert.equal(result.monsters[2].lastKnown, null);
   const movedHero = { blockId: world.blocks[1].id, cell: world.blocks[1].maze.start };
   // Keep the Stalker stationary at its original position for this detection assertion.
   result = tickMonsters(world, [monster('stalker', hero), result.monsters[1]], movedHero, 50);
   assert.equal(result.alert, false);
   assert.deepEqual(result.monsters[1].lastKnown, hero);
   assert.equal(result.monsters[1].mode, 'search');
+});
+
+test('no monster type ever crosses a gateway, while patrolling or pursuing', () => {
+  const world = generateWorld(LEVELS[13].blocks, 453);
+  const types = ['hunter', 'wraith', 'brute', 'stalker'];
+  for (const [i, block] of world.blocks.entries()) {
+    // Hero sits beside a gateway of this block, or in the next block, to tempt crossings.
+    const gateway = (world.gatewaysByBlock.get(block.id) ?? [])[0];
+    const heroes = [{ blockId: block.id, cell: gateway ? gateway.fromCell : block.maze.start }];
+    if (gateway) heroes.push({ blockId: gateway.toBlockId, cell: gateway.toCell });
+    for (const hero of heroes) {
+      let w = world, ms = [monster(types[i % 4], { blockId: block.id, cell: block.maze.end })];
+      for (let now = 0; now < 120000; now += 100) {
+        ({ world: w, monsters: ms } = tickMonsters(w, ms, hero, now));
+        for (const m of ms) {
+          assert.equal(m.location.blockId, block.id);
+          if (m.travel) assert.equal(m.travel.to.blockId, block.id);
+        }
+      }
+    }
+  }
 });
 
 test('Brute waits entire fuse, opens real passage, and scrambles never reseal it', () => {
@@ -224,14 +249,45 @@ test('seeded walker routes agree with independent BFS before and after scramblin
   }
 });
 
-test('runtime hunter journeys back through multiple blocks to last known hero location', () => {
+test('hunter with a last-known cell in another block drops it and roams its own block', () => {
+  const world = generateWorld(LEVELS[7].blocks, 78);
+  const target = { blockId: world.startBlockId, cell: world.blocks[0].maze.start };
+  const start = { blockId: world.endBlockId, cell: world.blocks.at(-1).maze.end };
+  let m = { ...monster('hunter', start), lastKnown: target };
+  for (let now = 0; now < 60000; now += MONSTER_STEP_MS) {
+    m = tickMonsters(world, [m], target, now).monsters[0];
+    assert.equal(m.location.blockId, start.blockId);
+    if (m.travel) {
+      assert.equal(m.travel.to.blockId, start.blockId);
+      const block = world.blocks.find(b => b.id === m.travel.from.blockId);
+      assert(block.maze.openEdges.has(edgeKey(m.travel.from.cell, m.travel.to.cell)));
+    }
+  }
+  assert.equal(m.lastKnown, null);
+});
+
+test('[crossBlocks on] Stalker broadcasts across blocks, releases outside radius, no live tracking after loss', () => {
+  const world = generateWorld(LEVELS[13].blocks, 453);
+  const hero = { blockId: world.startBlockId, cell: world.blocks[0].maze.start };
+  const far = { blockId: world.endBlockId, cell: world.blocks.at(-1).maze.end };
+  let result = tickMonsters(world, [monster('stalker', hero), monster('wraith', far)], hero, 0, CROSS);
+  assert(result.alert);
+  assert.deepEqual(result.monsters[1].lastKnown, hero);
+  const movedHero = { blockId: world.blocks[1].id, cell: world.blocks[1].maze.start };
+  // Keep the Stalker stationary at its original position for this detection assertion.
+  result = tickMonsters(world, [monster('stalker', hero), result.monsters[1]], movedHero, 50, CROSS);
+  assert.equal(result.alert, false);
+  assert.deepEqual(result.monsters[1].lastKnown, hero);
+  assert.equal(result.monsters[1].mode, 'search');
+});
+test('[crossBlocks on] runtime hunter journeys back through multiple blocks to last known hero location', () => {
   const world = generateWorld(LEVELS[7].blocks, 78);
   const target = { blockId: world.startBlockId, cell: world.blocks[0].maze.start };
   const start = { blockId: world.endBlockId, cell: world.blocks.at(-1).maze.end };
   let m = { ...monster('hunter', start), lastKnown: target };
   const visited = new Set([start.blockId]);
   for (let now = 0; now < 1000000 && !sameCell(m.location, target); now += MONSTER_STEP_MS) {
-    m = tickMonsters(world, [m], target, now).monsters[0];
+    m = tickMonsters(world, [m], target, now, CROSS).monsters[0];
     visited.add(m.location.blockId);
     if (m.travel && m.travel.from.blockId === m.travel.to.blockId) {
       const block = world.blocks.find(b => b.id === m.travel.from.blockId);
@@ -240,7 +296,29 @@ test('runtime hunter journeys back through multiple blocks to last known hero lo
   }
   assert(sameCell(m.location, target)); assert.equal(visited.size, world.blocks.length);
 });
-
+test('real game loop: hero runs all of level 9; every monster stays in its home block', () => {
+  for (let run = 0; run < 5; run++) {
+    useGameStore.getState().loadLevel(9);
+    for (let step = 0; step < 4000; step++) {
+      const s = useGameStore.getState();
+      if (s.reachedExit) break;
+      if (s.caughtBy) useGameStore.setState({ caughtBy: null });
+      if (!s.isMoving) {
+        const end = { blockId: s.world.endBlockId, cell: s.world.blocks.at(-1).maze.end };
+        const link = nextStep(s.world, { blockId: s.currentBlockId, cell: s.heroCell }, end, 'walk');
+        if (link) s.move(link.direction);
+      }
+      useGameStore.getState().tick(50);
+      const t = useGameStore.getState();
+      if (t.heroTravel && t.simulationTime >= t.heroTravel.startedAt + t.heroTravel.duration) t.finishMove();
+      for (const m of useGameStore.getState().monsters) {
+        assert.equal(m.location.blockId, m.homeBlockId);
+        if (m.travel) assert.equal(m.travel.to.blockId, m.homeBlockId);
+      }
+    }
+    assert(useGameStore.getState().reachedExit, 'hero should reach the exit through every block');
+  }
+});
 test('Ghost crosses a wall without opening it; searching stops at last seen cell', () => {
   const world = fixture(3, 1, false);
   let m = tickMonsters(world, [monster('wraith', p(0))], p(2), 0).monsters[0];

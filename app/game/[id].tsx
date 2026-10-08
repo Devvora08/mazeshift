@@ -11,6 +11,7 @@ import type { UtilityType } from '../../lib/modules/utilities';
 import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
 import { formatRunTime, useProgressStore } from '../../store/progressStore';
+import { UNLOCK_ALL_LEVELS } from '../../lib/devUnlock';
 
 /** Retry only when a held direction is blocked; completed slides chain immediately. */
 const BLOCKED_RETRY_MS = 80;
@@ -93,7 +94,7 @@ export default function GameScreen() {
   useEffect(() => {
     if (!progressHydrated) return;
     const progress = useProgressStore.getState();
-    if (levelId > progress.highestUnlockedLevel || (levelId > 10 && !progress.premiumUnlocked)) return;
+    if (!UNLOCK_ALL_LEVELS && (levelId > progress.highestUnlockedLevel || (levelId > 10 && !progress.premiumUnlocked))) return;
     const continued = resume === '1' && progress.activeRun?.levelId === levelId;
     baseElapsed.current = continued ? progress.activeRun!.elapsedMs : 0;
     loadLevel(levelId);
@@ -102,7 +103,7 @@ export default function GameScreen() {
   }, [levelId, resume, loadLevel, progressHydrated, premiumUnlocked]);
 
   useEffect(() => {
-    if (progressHydrated && (levelId > highestUnlockedLevel || (levelId > 10 && !premiumUnlocked))) router.replace('/');
+    if (!UNLOCK_ALL_LEVELS && progressHydrated && (levelId > highestUnlockedLevel || (levelId > 10 && !premiumUnlocked))) router.replace('/');
   }, [progressHydrated, highestUnlockedLevel, premiumUnlocked, levelId]);
 
   useEffect(() => {
@@ -195,6 +196,7 @@ export default function GameScreen() {
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
         {__DEV__ ? ' · PERF-4' : ''}
+        {UNLOCK_ALL_LEVELS ? ' · test build B2' : ''}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {caughtBy
