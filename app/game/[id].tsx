@@ -233,7 +233,7 @@ export default function GameScreen() {
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
         {__DEV__ ? ' · PERF-4' : ''}
-        {UNLOCK_ALL_LEVELS ? ' · test build B15' : ''}
+        {UNLOCK_ALL_LEVELS ? ' · test build B19' : ''}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {caughtBy
@@ -293,27 +293,46 @@ export default function GameScreen() {
               ? 'Stand on a charm and draw its symbol to collect it, then tap it here to cast'
               : undefined} />}
       <View className="h-72 items-center">
-        {caughtBy || reachedExit ? <View className="items-center pt-6">
+        {caughtBy || reachedExit ? <View className="items-center pt-6" style={{ alignSelf: 'stretch', paddingHorizontal: 4 }}>
           <Text className="font-hand text-3xl text-ink">{caughtBy ? 'The maze claimed you' : 'You made it out'}</Text>
           {reachedExit && <Text className="font-script text-base text-ink-soft">Time {formatRunTime(baseElapsed.current + displaySimulationTime)}</Text>}
-          {reachedExit && levelId < 20 && <Pressable accessibilityRole="button" accessibilityLabel="Next level"
-            className="mt-4 rounded-xl bg-ink px-8 py-3" onPress={() => router.replace({ pathname: '/game/[id]', params: { id: String(levelId + 1) } })}>
-            <Text className="font-hand text-xl text-paper">Next level</Text>
-          </Pressable>}
-          <Pressable accessibilityRole="button" accessibilityLabel="Retry level"
-            className="mt-4 rounded-xl bg-ink px-8 py-3" onPress={() => {
+          {/* One row, so every option stays within reach above the screen's bottom edge. */}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 20, alignSelf: 'stretch' }}>
+            {reachedExit && levelId < 20 && <EndButton label="Next level"
+              onPress={() => router.replace({ pathname: '/game/[id]', params: { id: String(levelId + 1) } })} />}
+            <EndButton label="Try again" onPress={() => {
               clearInput(); baseElapsed.current = 0; useProgressStore.getState().startRun(levelId);
               loadLevel(levelId); loadedRun.current = useGameStore.getState().runId;
               previousTick.current = performance.now();
-            }}>
-            <Text className="font-hand text-xl text-paper">Try again</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back to levels"
-            className="mt-3 px-6 py-2" onPress={() => router.dismissTo('/levels')}>
-            <Text className="font-hand text-lg text-ink">Back to levels</Text>
-          </Pressable>
+            }} />
+            <EndButton label="Back to levels" onPress={() => router.dismissTo('/levels')} />
+          </View>
         </View> : <DPad key={`${runId}-${paused}`} held={heldShared} onDirectionChange={handleDirectionChange} />}
       </View>
     </View>
+  );
+}
+
+/** End-of-run action. Styled with explicit styles on an inner View: NativeWind
+ * classes on a Pressable were dropped, which left the label with no padding. */
+function EndButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{ flex: 1 }}>
+      {({ pressed }) => (
+        <View style={{
+          minHeight: 58, borderRadius: 14, backgroundColor: pressed ? '#2a2a2a' : '#111111',
+          borderWidth: 2, borderColor: '#111111', paddingHorizontal: 12, paddingVertical: 12,
+          alignItems: 'center', justifyContent: 'center',
+          shadowColor: '#000000', shadowOpacity: 0.25, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+          elevation: pressed ? 1 : 4, transform: [{ scale: pressed ? 0.96 : 1 }],
+        }}>
+          <Text numberOfLines={2}
+            style={{ fontFamily: 'ArchitectsDaughter', fontSize: 18, lineHeight: 22, color: '#f0f0f0', textAlign: 'center',
+              textShadowColor: '#f0f0f0', textShadowOffset: { width: 0.5, height: 0 }, textShadowRadius: 0.5 }}>
+            {label}
+          </Text>
+        </View>
+      )}
+    </Pressable>
   );
 }

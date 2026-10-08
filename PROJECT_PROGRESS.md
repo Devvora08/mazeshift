@@ -2,6 +2,35 @@
 
 Updated: 2026-10-08
 
+## 2026-10-08 — progress integrity, hero home screen, guide, levels grid
+
+All items device-tested by the user in Expo Go (release-mode test server) and approved.
+
+### Saved progress fixes (`03dcbb8`)
+
+- **Zero best times / false completions / phantom deaths (real bug).** The game store outlives the game screen, so a newly opened level screen briefly saw the previous level's win or death and recorded it against the new level — e.g. win level 3, back, open level 1 → level 1 "completed" at 0:00; "Next level" could mark the next level completed and unlock the one after. Fix: each screen records wins, deaths and checkpoints only for the run it loaded (`lib/runGuard.ts`, `screenOwnsRun`).
+- **Defence in depth:** a time of 0 (or less) is never saved as a best; existing zero bests are reset to "no best" on launch and re-saved (completion, attempts and deaths kept).
+- **Stale writes:** a level loads once per visit (purchase/hydration updates no longer reload the maze mid-run or add attempts); nothing is persisted before the saved profile has loaded (a settings tap during launch could previously overwrite progress with defaults); a screen being replaced can no longer checkpoint over the next level's run.
+- **Leave confirmation:** Android back mid-run pauses the game and asks "Leave this level?" (Keep playing / Leave). No prompt after a win or capture, or in Practice. The run stays available as Continue.
+- New `npm run test:progress` (5 checks, in-memory AsyncStorage); verified to fail against the previous store.
+
+### Menus (`430b4c0`, `50d5d38`, and the levels-grid commit)
+
+- **Screens:** `/` hero home · `/levels` level grid, Practice, full-game unlock/restore, Music / Sound effects / Vibration settings · `/how-to-play` · `/guide` (Spells & monsters) · `/game/[id]`. In-game "Back to levels" uses `router.dismissTo('/levels')`.
+- **Home:** generated paper backdrop (`assets/home_paper.jpg`, matched to the original artwork's paper, fills any screen) under the transparent hero cutout (`assets/home_hero.webp`). Title "MazeShift" in Cinzel Decorative Black (`@expo-google-fonts/cinzel-decorative`, Tailwind `font-title`) sized to the full width just above the hero. Four outlined boxes centred on the hero's torso — Continue/Play · Level N, How to play (left); Spells & monsters, Audio On/Off (right; toggles music and effects together) — and an "All levels" box under the feet. Button columns come from the artwork's measured silhouette (`BODY_LEFT/RIGHT`), and the hero is drawn at 90% about the button centre (`HERO_DRAW_SCALE`).
+- **How to play:** goal, movement, shifting maze, collect/cast, monsters (block-confined), saved runs and Practice.
+- **Spells & monsters:** swipeable Spells / Monsters tabs (Spells default) with a sliding underline; spell icons and monster portraits cropped from the in-game sprite sheets. Ranges and timings match the code (Hunter/Brute 7, Ghost 3 through walls, Stalker 4 + block alarm; Shield 5 s, Trap holds 4 s and lasts 15 s, Dash 3 steps).
+- **Levels grid** (`components/LevelGrid.tsx`): 3 per row, Cinzel numbers, names underneath, scrollbar hidden. States: in-progress run → half-filled light-purple sloshing fluid (tap resumes); completed → deep purple box with drifting pink pixie dust and the best time; open → plain box; locked → faded. All effects are drawn on one Skia canvas from one clock with stateless particles, and the clock stops whenever the screen is not focused (it stays mounted beneath gameplay).
+- **Menu music:** `assets/audio/main_page.mp3` plays on every non-game screen from one player in the root layout (no restart between menu pages; waits for load; pauses in background). The unused 14 MB `menu_music.mp3` was removed.
+- **End-of-run panel:** Next level / Try again / Back to levels in one full-width row with identical solid buttons (fixed 18 px labels, wrap rather than shrink), so Back to levels is always reachable.
+- **Styling gotcha:** style functions and some layout classes on a NativeWind `Pressable` were silently dropped (no borders, no padding). Put visual styling on an inner `View` with explicit styles, as `HomeButton`, `EndButton` and the level boxes do.
+
+### Remaining backlog
+
+- Real release build check on a device before the next closed-test upload (all testing so far was Expo Go release mode).
+- Possible: give monsters the UI-thread treatment if they ever hitch on the heaviest levels.
+- Decided against: block centering and head-clipping changes (user: both look fine).
+
 ## 2026-10-07/08 — smooth movement, block-confined monsters, tap-to-cast
 
 All items below were device-tested by the user in Expo Go (release mode) unless marked otherwise.
@@ -12,12 +41,12 @@ All items below were device-tested by the user in Expo Go (release mode) unless 
 - **Growls by block:** any monster in the hero's block can growl, regardless of distance.
 - **Hero visible immediately on level load** (`fcae838`): decoded sprite sheets are cached app-wide and preloaded at startup.
 - **Draw once, tap to cast** (`ba26c30`): spell bar above the controls section (D-pad keeps its original position), first-acquisition slot order, count badge only above one charge. Drawing a held spell's sigil away from a charm still casts it. Empty bar shows a collect/cast hint.
-- **Route glow:** static, semi-transparent purple glow on gateway openings leading toward the exit. *Not yet seen on a device.*
+- **Route glow** (`56ed8ec`): static, semi-transparent purple glow on gateway openings leading toward the exit. Device-confirmed by the user ("glow is perfect").
 - **Game music** now starts only after the track has loaded (it could be silently dropped on level start).
 - **Testing setup:** `EXPO_PUBLIC_UNLOCK_ALL=1 npx expo start --no-dev --minify` gives a release-speed preview with all levels unlocked, a "test build Bn" title marker, monster home-block dots, and a PERF readout with per-subsystem timings and on/off switches. Never set that variable in `eas.json` or `.env`. Expo Go caches release-mode bundles: clear Expo Go *data* before each check (a new port does not help). The installed closed-test app runs old code.
 - 38 gameplay/monster checks pass; TypeScript clean.
 
-**Remaining backlog:** home/opening screen (hero art, Audio / How to play / Levels, Continue); levels map redesign; game-like charms/monsters guide (no How to play screen exists yet); review of back/leave confirmation, stale progress writes and zero best-time records. Decided against: block centering and head-clipping changes (user: both look fine). Before a new closed-test upload, verify smoothness on a real release build.
+*Backlog as of this entry — superseded by the 2026-10-08 menus entry above.*
 
 ## 2026-10-06 — audio lifecycle fix and roughness review
 

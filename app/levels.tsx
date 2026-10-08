@@ -1,6 +1,8 @@
 import { Link, router } from 'expo-router';
+import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
+import { LevelGrid, type LevelCell } from '../components/LevelGrid';
 import { LEVELS } from '../lib/levels/data';
 import { formatRunTime, useProgressStore } from '../store/progressStore';
 import { usePurchaseStore } from '../store/purchaseStore';
@@ -24,6 +26,20 @@ export default function Levels() {
   const purchaseError = usePurchaseStore((state) => state.error);
   const purchaseFullGame = usePurchaseStore((state) => state.purchaseFullGame);
   const restorePurchases = usePurchaseStore((state) => state.restorePurchases);
+  const [gridWidth, setGridWidth] = useState(0);
+
+  const cells: LevelCell[] = LEVELS.map((level) => {
+    // Local Expo development unlocks access without changing saved progress or purchases.
+    const needsPurchase = !UNLOCK_ALL_LEVELS && level.id > 10 && !premiumUnlocked;
+    const locked = !hydrated || (!UNLOCK_ALL_LEVELS && level.id > highestUnlockedLevel) || needsPurchase;
+    const record = records[String(level.id)];
+    const state = locked ? 'locked' : activeRun?.levelId === level.id ? 'ongoing'
+      : record?.completed ? 'completed' : 'open';
+    return { id: level.id, title: level.title, state,
+      bestTime: record?.bestTimeMs != null ? formatRunTime(record.bestTimeMs) : undefined };
+  });
+  const openLevel = (cell: LevelCell) => router.push({ pathname: '/game/[id]',
+    params: cell.state === 'ongoing' ? { id: String(cell.id), resume: '1' } : { id: String(cell.id) } });
   return (
     <View className="flex-1 bg-paper px-8 pt-16">
       <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} hitSlop={12}>
@@ -31,14 +47,7 @@ export default function Levels() {
       </Pressable>
       <Text className="mt-2 font-hand text-4xl text-ink">Levels</Text>
 
-      <ScrollView className="mt-8" contentContainerClassName="gap-2 pb-8">
-        {hydrated && activeRun && (
-          <Link href={{ pathname: '/game/[id]', params: { id: String(activeRun.levelId), resume: '1' } }} asChild>
-            <Text className="rounded-xl bg-ink px-4 py-3 font-script text-lg text-paper">
-              Continue level {activeRun.levelId} · {formatRunTime(activeRun.elapsedMs)}
-            </Text>
-          </Link>
-        )}
+      <ScrollView className="mt-8" contentContainerClassName="gap-2 pb-8" showsVerticalScrollIndicator={false}>
         <Link href={{ pathname: '/game/[id]', params: { id: '0' } }} asChild>
           <Text className="rounded-xl border border-spell-phase px-4 py-3 font-script text-lg text-ink">
             Practice — try out spells
@@ -60,24 +69,9 @@ export default function Levels() {
             {purchaseError && <Text className="mt-1 font-script text-sm text-ink-soft">{purchaseError}</Text>}
           </View>
         )}
-        {LEVELS.map((level) => {
-          // Local Expo development unlocks access without changing saved progress or purchases.
-          const needsPurchase = !UNLOCK_ALL_LEVELS && level.id > 10 && !premiumUnlocked;
-          const locked = !hydrated || (!UNLOCK_ALL_LEVELS && level.id > highestUnlockedLevel) || needsPurchase;
-          const record = records[String(level.id)];
-          return (
-          <Link
-            key={level.id}
-            href={{ pathname: '/game/[id]', params: { id: String(level.id) } }}
-            asChild
-            disabled={locked}
-          >
-            <Text className={`rounded-xl border px-4 py-3 font-script text-lg ${locked ? 'border-ink/10 text-ink-soft' : 'border-ink/15 text-ink'}`}>
-              {level.id}. {level.title}{needsPurchase ? '  · full game' : locked ? '  · locked' : record?.completed ? '  ✓' : ''}
-              {record?.bestTimeMs != null ? `  · best ${formatRunTime(record.bestTimeMs)}` : ''}
-            </Text>
-          </Link>
-        );})}
+        <View className="mt-2" onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
+          <LevelGrid width={gridWidth} cells={cells} onPress={openLevel} />
+        </View>
         <View className="mt-6 border-t border-ink/15 pt-4">
           <Text className="font-hand text-xl text-ink">Settings</Text>
           <Pressable onPress={() => setMusicEnabled(!settings.musicEnabled)} className="py-2">
