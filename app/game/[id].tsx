@@ -123,7 +123,7 @@ export default function GameScreen() {
   }, [levelId, resume, loadLevel, progressHydrated, premiumUnlocked]);
 
   useEffect(() => {
-    if (!UNLOCK_ALL_LEVELS && progressHydrated && (levelId > highestUnlockedLevel || (levelId > 10 && !premiumUnlocked))) router.replace('/');
+    if (!UNLOCK_ALL_LEVELS && progressHydrated && (levelId > highestUnlockedLevel || (levelId > 10 && !premiumUnlocked))) router.dismissTo('/levels');
   }, [progressHydrated, highestUnlockedLevel, premiumUnlocked, levelId]);
 
   useEffect(() => {
@@ -233,7 +233,7 @@ export default function GameScreen() {
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
         {__DEV__ ? ' · PERF-4' : ''}
-        {UNLOCK_ALL_LEVELS ? ' · test build B11' : ''}
+        {UNLOCK_ALL_LEVELS ? ' · test build B15' : ''}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {caughtBy
@@ -309,7 +309,7 @@ export default function GameScreen() {
             <Text className="font-hand text-xl text-paper">Try again</Text>
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Back to levels"
-            className="mt-3 px-6 py-2" onPress={() => router.replace('/')}>
+            className="mt-3 px-6 py-2" onPress={() => router.dismissTo('/levels')}>
             <Text className="font-hand text-lg text-ink">Back to levels</Text>
           </Pressable>
         </View> : <DPad key={`${runId}-${paused}`} held={heldShared} onDirectionChange={handleDirectionChange} />}

@@ -1,110 +1,150 @@
-import { Link } from 'expo-router';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import { useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { LEVELS } from '../lib/levels/data';
-import { MenuAudio } from '../components/MenuAudio';
-import { formatRunTime, useProgressStore } from '../store/progressStore';
-import { usePurchaseStore } from '../store/purchaseStore';
 import { UNLOCK_ALL_LEVELS } from '../lib/devUnlock';
+import { useProgressStore } from '../store/progressStore';
 
+const PAPER = require('../assets/home_paper.jpg');
+const HERO = require('../assets/home_hero.webp');
+/** Transparent cutout, 1024x1536. */
+const HERO_ASPECT = 1536 / 1024;
+/** Silhouette's widest left/right edges (fractions of image width) between the
+ * shoulders and hips, measured from the artwork's alpha channel. */
+const BODY_LEFT = 0.204;
+const BODY_RIGHT = 0.766;
+/** Where the feet end (fraction of image height), for placing the levels button. */
+const FEET_BOTTOM = 0.992;
+/** Height (fraction of image) the two button rows are centered on: mid-torso. */
+const BUTTONS_CENTER = 0.34;
+const HERO_WIDTH_RATIO = 0.72;
+/** The hero is drawn slightly smaller than the layout box, shrunk about the
+ * button rows' center, so the buttons keep their size and position. */
+const HERO_DRAW_SCALE = 0.9;
+const BUTTON_HEIGHT = 76;
+const BUTTON_GAP = 14;
+const INK = '#111111';
+
+/** Opening screen: paper backdrop, the transparent hero, two boxes on each side. */
 export default function Home() {
+  const window = useWindowDimensions();
+  // Measure the space this screen really gets: on edge-to-edge Android the window
+  // size can exclude the system bars, which left an unpainted strip at the bottom.
+  const [size, setSize] = useState({ width: window.width, height: window.height });
+  const { width, height } = size;
+  const insets = useSafeAreaInsets();
   const hydrated = useProgressStore((state) => state.hydrated);
-  const highestUnlockedLevel = useProgressStore((state) => state.highestUnlockedLevel);
-  const records = useProgressStore((state) => state.levels);
   const activeRun = useProgressStore((state) => state.activeRun);
-  const settings = useProgressStore((state) => state.settings);
+  const highestUnlockedLevel = useProgressStore((state) => state.highestUnlockedLevel);
   const premiumUnlocked = useProgressStore((state) => state.premiumUnlocked);
-  const setMusicEnabled = useProgressStore((state) => state.setMusicEnabled);
-  const setSoundEffectsEnabled = useProgressStore((state) => state.setSoundEffectsEnabled);
-  const setHapticsEnabled = useProgressStore((state) => state.setHapticsEnabled);
-  const purchaseReady = usePurchaseStore((state) => state.ready);
-  const purchaseBusy = usePurchaseStore((state) => state.busy);
-  const priceText = usePurchaseStore((state) => state.priceText);
-  const purchaseAppUserId = usePurchaseStore((state) => state.appUserId);
-  const purchaseNotice = usePurchaseStore((state) => state.notice);
-  const purchaseError = usePurchaseStore((state) => state.error);
-  const purchaseFullGame = usePurchaseStore((state) => state.purchaseFullGame);
-  const restorePurchases = usePurchaseStore((state) => state.restorePurchases);
-  return (
-    <View className="flex-1 bg-paper px-8 pt-16">
-      <MenuAudio />
-      <Text className="font-hand text-4xl text-ink">MazeShift</Text>
-      <Text className="mt-2 font-script text-base text-ink-soft">
-        The maze moves. Find the exit before it changes again.
-      </Text>
+  const musicEnabled = useProgressStore((state) => state.settings.musicEnabled);
+  const soundEffectsEnabled = useProgressStore((state) => state.settings.soundEffectsEnabled);
 
-      <ScrollView className="mt-8" contentContainerClassName="gap-2 pb-8">
-        {hydrated && activeRun && (
-          <Link href={{ pathname: '/game/[id]', params: { id: String(activeRun.levelId), resume: '1' } }} asChild>
-            <Text className="rounded-xl bg-ink px-4 py-3 font-script text-lg text-paper">
-              Continue level {activeRun.levelId} · {formatRunTime(activeRun.elapsedMs)}
-            </Text>
-          </Link>
-        )}
-        <Link href={{ pathname: '/game/[id]', params: { id: '0' } }} asChild>
-          <Text className="rounded-xl border border-spell-phase px-4 py-3 font-script text-lg text-ink">
-            Practice — try out spells
-          </Text>
-        </Link>
-        {!UNLOCK_ALL_LEVELS && hydrated && highestUnlockedLevel >= 11 && !premiumUnlocked && (
-          <View className="mb-3 rounded-xl border border-spell-phase p-4">
-            <Text className="font-hand text-2xl text-ink">Unlock the full game</Text>
-            <Text className="mt-1 font-script text-base text-ink-soft">Levels 11–20 and future MazeShift campaign levels.</Text>
-            <Pressable disabled={!purchaseReady || purchaseBusy} onPress={() => void purchaseFullGame()}
-              className="mt-3 rounded-xl bg-ink px-4 py-3">
-              <Text className="text-center font-hand text-xl text-paper">
-                {purchaseBusy ? 'Connecting…' : `Unlock${priceText ? ` · ${priceText}` : ''}`}
-              </Text>
-            </Pressable>
-            <Pressable disabled={purchaseBusy} onPress={() => void restorePurchases()} className="mt-2 py-2">
-              <Text className="text-center font-script text-base text-ink">Restore purchase</Text>
-            </Pressable>
-            {purchaseError && <Text className="mt-1 font-script text-sm text-ink-soft">{purchaseError}</Text>}
-          </View>
-        )}
-        {LEVELS.map((level) => {
-          // Local Expo development unlocks access without changing saved progress or purchases.
-          const needsPurchase = !UNLOCK_ALL_LEVELS && level.id > 10 && !premiumUnlocked;
-          const locked = !hydrated || (!UNLOCK_ALL_LEVELS && level.id > highestUnlockedLevel) || needsPurchase;
-          const record = records[String(level.id)];
-          return (
-          <Link
-            key={level.id}
-            href={{ pathname: '/game/[id]', params: { id: String(level.id) } }}
-            asChild
-            disabled={locked}
-          >
-            <Text className={`rounded-xl border px-4 py-3 font-script text-lg ${locked ? 'border-ink/10 text-ink-soft' : 'border-ink/15 text-ink'}`}>
-              {level.id}. {level.title}{needsPurchase ? '  · full game' : locked ? '  · locked' : record?.completed ? '  ✓' : ''}
-              {record?.bestTimeMs != null ? `  · best ${formatRunTime(record.bestTimeMs)}` : ''}
-            </Text>
-          </Link>
-        );})}
-        <View className="mt-6 border-t border-ink/15 pt-4">
-          <Text className="font-hand text-xl text-ink">Settings</Text>
-          <Pressable onPress={() => setMusicEnabled(!settings.musicEnabled)} className="py-2">
-            <Text className="font-script text-lg text-ink">Music: {settings.musicEnabled ? 'On' : 'Off'}</Text>
-          </Pressable>
-          <Pressable onPress={() => setSoundEffectsEnabled(!settings.soundEffectsEnabled)} className="py-2">
-            <Text className="font-script text-lg text-ink">Sound effects: {settings.soundEffectsEnabled ? 'On' : 'Off'}</Text>
-          </Pressable>
-          <Pressable onPress={() => setHapticsEnabled(!settings.hapticsEnabled)} className="py-2">
-            <Text className="font-script text-lg text-ink">Vibration: {settings.hapticsEnabled ? 'On' : 'Off'}</Text>
-          </Pressable>
-          <Pressable disabled={!purchaseReady || purchaseBusy} onPress={() => void restorePurchases()} className="py-2">
-            <Text className="font-script text-lg text-ink">
-              {purchaseBusy ? 'Checking purchases…' : 'Restore purchase'}
-            </Text>
-          </Pressable>
-          {purchaseNotice && <Text className="font-script text-sm text-ink-soft">{purchaseNotice}</Text>}
-          {purchaseError && <Text className="font-script text-sm text-ink-soft">{purchaseError}</Text>}
-          {purchaseAppUserId && (
-            <Text selectable className="mt-2 font-script text-xs text-ink-soft">
-              Purchase support ID: {purchaseAppUserId}
-            </Text>
-          )}
-        </View>
-      </ScrollView>
+  // Size the hero to the width (capped by the height left between title and
+  // footer), then center its body silhouette so both button columns match.
+  const titleSpace = insets.top + 100, footerSpace = insets.bottom + 90;
+  const heroWidth = Math.min(width * HERO_WIDTH_RATIO, (height - titleSpace - footerSpace) / HERO_ASPECT);
+  const heroHeight = heroWidth * HERO_ASPECT;
+  const heroLeft = width / 2 - (BODY_LEFT + BODY_RIGHT) / 2 * heroWidth;
+  const heroTop = titleSpace + Math.max(0, (height - titleSpace - footerSpace - heroHeight) / 2);
+  const gutter = 10, clearance = 4;
+  const columnWidth = Math.min(heroLeft + BODY_LEFT * heroWidth, width - (heroLeft + BODY_RIGHT * heroWidth))
+    - gutter - clearance;
+  const buttonsTop = heroTop + BUTTONS_CENTER * heroHeight - (BUTTON_HEIGHT * 2 + BUTTON_GAP) / 2;
+  // The drawn hero, shrunk about the point the buttons are centered on.
+  const anchorX = heroLeft + (BODY_LEFT + BODY_RIGHT) / 2 * heroWidth;
+  const anchorY = heroTop + BUTTONS_CENTER * heroHeight;
+  const drawWidth = heroWidth * HERO_DRAW_SCALE, drawHeight = heroHeight * HERO_DRAW_SCALE;
+  const drawLeft = anchorX - (BODY_LEFT + BODY_RIGHT) / 2 * drawWidth;
+  const drawTop = anchorY - BUTTONS_CENTER * drawHeight;
+  const levelsTop = Math.min(drawTop + FEET_BOTTOM * drawHeight + 14, height - insets.bottom - 70);
+  const titleHeight = 72;
+  const titleTop = Math.max(insets.top + 8, drawTop - titleHeight - 8);
+
+  const audioOn = musicEnabled || soundEffectsEnabled;
+  const toggleAudio = () => {
+    const progress = useProgressStore.getState();
+    progress.setMusicEnabled(!audioOn);
+    progress.setSoundEffectsEnabled(!audioOn);
+  };
+
+  const nextLevel = Math.min(20, Math.max(1, highestUnlockedLevel));
+  const nextNeedsPurchase = !UNLOCK_ALL_LEVELS && nextLevel > 10 && !premiumUnlocked;
+  const play = () => {
+    if (activeRun) {
+      router.push({ pathname: '/game/[id]', params: { id: String(activeRun.levelId), resume: '1' } });
+    } else if (nextNeedsPurchase) {
+      router.push('/levels');
+    } else {
+      router.push({ pathname: '/game/[id]', params: { id: String(nextLevel) } });
+    }
+  };
+  const playLabel = activeRun ? `Continue\nLevel ${activeRun.levelId}` : `Play\nLevel ${nextLevel}`;
+
+  return (
+    <View style={styles.root}
+      onLayout={(e) => {
+        const { width: w, height: h } = e.nativeEvent.layout;
+        if (w !== width || h !== height) setSize({ width: w, height: h });
+      }}>
+      <Image source={PAPER} resizeMode="cover" style={StyleSheet.absoluteFill} />
+      <Image source={HERO} accessibilityIgnoresInvertColors resizeMode="contain"
+        style={{ position: 'absolute', left: drawLeft, top: drawTop, width: drawWidth, height: drawHeight }} />
+
+      <View style={{ position: 'absolute', top: titleTop, height: titleHeight, left: 16, right: 16,
+        justifyContent: 'center' }}>
+        <Text accessibilityRole="header" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.4}
+          style={styles.title}>MazeShift</Text>
+      </View>
+
+      <View style={{ position: 'absolute', top: buttonsTop, left: gutter, width: columnWidth, gap: BUTTON_GAP }}>
+        <HomeButton label={playLabel} onPress={play} disabled={!hydrated} />
+        <HomeButton label="How to play" onPress={() => router.push('/how-to-play')} />
+      </View>
+      <View style={{ position: 'absolute', top: buttonsTop, right: gutter, width: columnWidth, gap: BUTTON_GAP }}>
+        <HomeButton label={'Spells &\nmonsters'} onPress={() => router.push('/guide')} />
+        <HomeButton label={`Audio\n${audioOn ? 'On' : 'Off'}`} onPress={toggleAudio} disabled={!hydrated} />
+      </View>
+
+      <View style={{ position: 'absolute', top: levelsTop, alignSelf: 'center', width: Math.min(220, width * 0.55) }}>
+        <HomeButton label="All levels" onPress={() => router.push('/levels')} height={56} />
+      </View>
     </View>
   );
 }
+
+/** Ink-outlined rectangle with no fill. The border lives on an inner View: a
+ * style function on a NativeWind Pressable was dropped, leaving no box at all. */
+function HomeButton({ label, onPress, disabled, height = BUTTON_HEIGHT }: {
+  label: string; onPress: () => void; disabled?: boolean; height?: number;
+}) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label.replace('\n', ' ')}
+      disabled={disabled} onPress={onPress}>
+      {({ pressed }) => (
+        <View style={[styles.box, { height, opacity: disabled ? 0.4 : 1,
+          backgroundColor: pressed ? '#1111111a' : 'transparent',
+          transform: [{ scale: pressed ? 0.96 : 1 }] }]}>
+          <Text className="font-hand text-ink" numberOfLines={2} adjustsFontSizeToFit
+            style={[styles.bold, styles.label]}>{label}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#ddd7d2' },
+  box: {
+    borderWidth: 2.5, borderColor: INK, borderRadius: 6,
+    paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center',
+  },
+  label: { fontSize: 20, lineHeight: 24, textAlign: 'center' },
+  title: {
+    fontFamily: 'CinzelDecorative', fontSize: 64, color: INK, textAlign: 'center',
+    textShadowColor: '#a855f7aa', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 10,
+  },
+  // The hand-drawn font ships in one weight; a tight same-color shadow thickens it.
+  bold: { textShadowColor: INK, textShadowOffset: { width: 0.6, height: 0 }, textShadowRadius: 0.6 },
+});

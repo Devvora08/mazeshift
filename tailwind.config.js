@@ -27,6 +27,7 @@ module.exports = {
       fontFamily: {
         hand: ['ArchitectsDaughter'],
         script: ['PatrickHand'],
+        title: ['CinzelDecorative'],
       },
     },
   },

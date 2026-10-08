@@ -10,8 +10,10 @@ import {
   ArchitectsDaughter_400Regular,
 } from '@expo-google-fonts/architects-daughter';
 import { PatrickHand_400Regular } from '@expo-google-fonts/patrick-hand';
+import { CinzelDecorative_900Black } from '@expo-google-fonts/cinzel-decorative';
 import { useProgressStore } from '../store/progressStore';
 import { usePurchaseStore } from '../store/purchaseStore';
+import { MenuAudio } from '../components/MenuAudio';
 import { preloadSpriteImages } from '../lib/sprites/imageCache';
 
 export default function RootLayout() {
@@ -21,6 +23,7 @@ export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     ArchitectsDaughter: ArchitectsDaughter_400Regular,
     PatrickHand: PatrickHand_400Regular,
+    CinzelDecorative: CinzelDecorative_900Black,
   });
 
   useEffect(() => {
@@ -38,6 +41,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <StatusBar style="dark" />
+      {progressHydrated && <MenuAudio />}
       <Stack screenOptions={{ headerShown: false }} />
     </GestureHandlerRootView>
   );
