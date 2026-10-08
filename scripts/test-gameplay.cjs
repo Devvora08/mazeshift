@@ -147,6 +147,26 @@ test('campaign collection respects capacity and availability; scrambles do not r
   state().castSigil('shield'); assert.equal(state().shieldUntil,0); assert.deepEqual(state().inventory,['shield']);
 });
 
+test('draw to collect, tap to cast: slot order is first acquisition; a tap casts with existing effects', () => {
+  state().loadLevel(18);
+  const take = type => {
+    const [key] = [...state().pickups].find(([, t]) => t === type);
+    const [blockId, cell] = key.split(':'), [x, y] = cell.split(',').map(Number);
+    store.setState({ currentBlockId: blockId, heroCell: { x, y }, monsters: [] });
+    state().castSigil(type);
+  };
+  const [first, second] = [...new Set(state().pickups.values())];
+  take(second); take(first);
+  assert.deepEqual(state().spellOrder, [second, first]);
+  assert.deepEqual([...state().inventory].sort(), [first, second].sort());
+  store.setState({ inventory: ['shield', 'shield'], spellOrder: ['shield'] });
+  state().castSpell('shield');
+  assert(state().shieldUntil > state().simulationTime); assert.deepEqual(state().inventory, ['shield']);
+  assert.deepEqual(state().spellOrder, ['shield'], 'order survives while charges remain');
+  state().castSpell('trap'); assert.deepEqual(state().inventory, ['shield'], 'casting an unheld spell does nothing');
+  state().loadLevel(18); assert.deepEqual(state().spellOrder, []);
+});
+
 test('Scramble charm changes every block immediately without resetting the timed schedule', () => {
   state().loadLevel(18); store.setState({ inventory:['scramble'], monsters:[], pickups:new Map() });
   const before = state().world, deadline = state().nextScrambleAt;

@@ -4,6 +4,7 @@ import { AppState, Pressable, Text, View } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
 import { DPad } from '../../components/DPad';
+import { SPELL_BAR_HEIGHT, SpellBar } from '../../components/SpellBar';
 import { SigilCanvas } from '../../components/SigilCanvas';
 import { WorldCanvas } from '../../components/WorldCanvas';
 import { PerformanceReadout } from '../../components/PerformanceReadout';
@@ -51,6 +52,8 @@ export default function GameScreen() {
   const checkScramble = useGameStore((s) => s.checkScramble);
   const finishMove = useGameStore((s) => s.finishMove);
   const castSigil = useGameStore((s) => s.castSigil);
+  const castSpell = useGameStore((s) => s.castSpell);
+  const spellOrder = useGameStore((s) => s.spellOrder);
 
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [now, setNow] = useState(Date.now());
@@ -178,15 +181,14 @@ export default function GameScreen() {
     [castSigil, advanceTime]
   );
 
+  const handleSpellTap = useCallback((type: UtilityType) => {
+    advanceTime(); castSpell(type);
+  }, [castSpell, advanceTime]);
+
   const isFlashing = scrambleFlashUntil !== null && now < scrambleFlashUntil;
   const secondsToScramble = nextScrambleAt !== null ? Math.max(0, (nextScrambleAt - now) / 1000) : null;
   const isFeedbackVisible = feedback !== null && now < feedback.until;
   const shieldActive = displaySimulationTime < shieldUntil;
-
-  const inventoryCounts = inventory.reduce<Partial<Record<UtilityType, number>>>((acc, type) => {
-    acc[type] = (acc[type] ?? 0) + 1;
-    return acc;
-  }, {});
 
   return (
     <View className="flex-1 bg-paper px-4 pt-14">
@@ -194,7 +196,7 @@ export default function GameScreen() {
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
         {__DEV__ ? ' · PERF-4' : ''}
-        {UNLOCK_ALL_LEVELS ? ' · test build B8' : ''}
+        {UNLOCK_ALL_LEVELS ? ' · test build B10' : ''}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {caughtBy
@@ -209,13 +211,6 @@ export default function GameScreen() {
               ? isFlashing ? 'all maze blocks are shifting' : `all blocks scramble in ${secondsToScramble.toFixed(1)}s`
               : 'maze is calm here'}
       </Text>
-      {Object.keys(inventoryCounts).length > 0 && (
-        <Text className="font-script text-sm text-ink-soft">
-          {Object.entries(inventoryCounts)
-            .map(([type, count]) => `${type} x${count}`)
-            .join('   ')}
-        </Text>
-      )}
       {shieldActive && <Text className="font-script text-sm text-ink-soft">
         Shield: {Math.max(0, (shieldUntil - displaySimulationTime) / 1000).toFixed(1)}s
       </Text>}
@@ -251,6 +246,12 @@ export default function GameScreen() {
         )}
       </View>
 
+      {/* Above the controls section, taking its height from the maze area, so the
+          D-pad keeps its original, reachable position. Height is reserved even when
+          empty so nothing shifts as spells are collected and spent. */}
+      {caughtBy || reachedExit
+        ? <View style={{ height: SPELL_BAR_HEIGHT }} />
+        : <SpellBar order={spellOrder} inventory={inventory} onCast={handleSpellTap} />}
       <View className="h-72 items-center">
         {caughtBy || reachedExit ? <View className="items-center pt-6">
           <Text className="font-hand text-3xl text-ink">{caughtBy ? 'The maze claimed you' : 'You made it out'}</Text>

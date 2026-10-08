@@ -71,6 +71,8 @@ interface GameState {
   dashRemaining: number;
   dashDirection: Direction | null;
   inventory: UtilityType[];
+  /** Spell types in the order first acquired this level; the spell bar's slot order. */
+  spellOrder: UtilityType[];
   /** keyed by "blockId:x,y" — cleared as each is picked up. */
   pickups: Map<string, UtilityType>;
   feedback: { message: string; until: number } | null;
@@ -91,6 +93,8 @@ interface GameState {
   /** A location-independent sigil was recognized — acquire it if the hero stands on the
    *  matching pickup, otherwise cast it from inventory using only the hero's state. */
   castSigil: (type: UtilityType) => void;
+  /** Cast a held spell (tapped in the spell bar). */
+  castSpell: (type: UtilityType) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -113,7 +117,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   pausedAt: null,
   runId: 0,
   shieldUntil: 0, traps: [], dashRemaining: 0, dashDirection: null,
-    inventory: [],
+    inventory: [], spellOrder: [],
   pickups: new Map(),
   feedback: null,
 
@@ -156,7 +160,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       pausedAt: null,
       runId: get().runId + 1,
       shieldUntil: 0, traps: [], dashRemaining: 0, dashDirection: null,
-    inventory: [],
+    inventory: [], spellOrder: [],
       pickups,
       feedback: null,
     });
@@ -286,11 +290,11 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   castSigil: (type) => {
     const s = get();
-    const { world, level, currentBlockId, heroCell, facing, inventory, pickups } = s;
-    if (!world || !level || !currentBlockId || !heroCell || s.caughtBy || s.paused || s.reachedExit || s.isMoving) return;
-    const blockIndex = world.blocks.findIndex(b => b.id === currentBlockId);
-    if (blockIndex < 0) return;
-    const block = world.blocks[blockIndex];
+    const { level, currentBlockId, heroCell, inventory, pickups } = s;
+    if (!level || !currentBlockId || !heroCell || s.caughtBy || s.paused || s.reachedExit) return;
+    // Mid-step the store already holds the destination cell, which is where the
+    // UI hero engine is heading; without an engine (tests) keep the old guard.
+    if (s.isMoving && !heroDriver()) return;
     const say = (message: string) => set({ feedback: { message, until: Date.now() + FEEDBACK_MS } });
     if (!level.utilities.includes(type)) { say('This charm is not available in this level'); return; }
 
@@ -298,9 +302,23 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (pickups.get(key) === type) {
       if (inventory.length >= level.inventoryCap) { say('Inventory full'); return; }
       const nextPickups = new Map(pickups); nextPickups.delete(key);
-      set({ inventory: [...inventory, type], pickups: nextPickups });
-      say('Acquired ' + type); return;
+      set({ inventory: [...inventory, type], pickups: nextPickups,
+        spellOrder: s.spellOrder.includes(type) ? s.spellOrder : [...s.spellOrder, type] });
+      say('Acquired ' + type + ' — tap it below to cast'); return;
     }
+    // Drawing a held spell's sigil away from its charm still casts it.
+    get().castSpell(type);
+  },
+
+  castSpell: (type) => {
+    const s = get();
+    const { world, level, currentBlockId, heroCell, facing, inventory } = s;
+    if (!world || !level || !currentBlockId || !heroCell || s.caughtBy || s.paused || s.reachedExit) return;
+    if (s.isMoving && !heroDriver()) return;
+    const blockIndex = world.blocks.findIndex(b => b.id === currentBlockId);
+    if (blockIndex < 0) return;
+    const block = world.blocks[blockIndex];
+    const say = (message: string) => set({ feedback: { message, until: Date.now() + FEEDBACK_MS } });
     const index = inventory.indexOf(type);
     if (index < 0) { say('No ' + type + ' to cast'); return; }
     const nextInventory = inventory.slice(); nextInventory.splice(index, 1);
