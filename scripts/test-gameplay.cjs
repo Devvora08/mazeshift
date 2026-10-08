@@ -13,8 +13,8 @@ const { tickMonsters, breakWall } = require('../lib/modules/monsters/logic.ts');
 const { applyDestroy, findNearestWallTarget } = require('../lib/modules/utilities/logic.ts');
 const { recognizeSigil } = require('../lib/modules/utilities/recognizer.ts');
 const { SIGIL_TEMPLATES } = require('../lib/modules/utilities/sigils.ts');
-const { triggerTraps } = require('../lib/modules/utilities/effects.ts');
-const { useGameStore: store } = require('../store/gameStore.ts');
+const { triggerTraps, DASH_STEP_MS } = require('../lib/modules/utilities/effects.ts');
+const { useGameStore: store, HERO_STEP_MS } = require('../store/gameStore.ts');
 const state = () => store.getState();
 const diff = (a, b) => [...a].filter(e => !b.has(e)).length + [...b].filter(e => !a.has(e)).length;
 function configure(world = fixture(8)) {
@@ -222,6 +222,35 @@ test('Destroy spell openings remain permanent across heavy scrambling', () => {
   const edge=edgeKey(p(0).cell,p(1).cell);
   let maze=applyDestroy(world.blocks[0].maze,{edge,neighbor:p(1).cell});
   for(let i=0;i<20;i++) { maze=scrambleMaze(maze,createRng(i),Math.round(eligibleEdgeCount(maze)*0.7)).maze; assert(maze.openEdges.has(edge)); assertMazeIsFair(maze); }
+});
+
+test('UI hero engine: committed steps feed game rules; Dash and Phase hand steps to the engine', () => {
+  const { attachHeroDriver } = require('../lib/hero/driver.ts');
+  const commands = [];
+  const detach = attachHeroDriver({ force: c => commands.push(c) });
+  try {
+    configure();
+    const from = { blockId: state().currentBlockId, cell: state().heroCell };
+    state().commitStep(p(1), 'right', 200);
+    assert.deepEqual(state().heroCell, p(1).cell); assert.equal(state().facing, 'right');
+    assert.deepEqual(state().heroTravel.from, from); assert(state().isMoving);
+    completeStep(); assert(!state().isMoving);
+    state().setFacing('left'); assert.equal(state().facing, 'left');
+    state().setFacing('right');
+    store.setState({ inventory: ['dash'] }); state().castSigil('dash');
+    assert.equal(commands.length, 1); assert.deepEqual(state().inventory, []);
+    assert.deepEqual(commands[0].steps.map(s => s.cell.x), [2, 3, 4]);
+    assert.equal(commands[0].stepMs, DASH_STEP_MS); assert.deepEqual(commands[0].from, p(1));
+    assert.deepEqual(state().heroCell, p(1).cell, 'the store waits for the engine to report steps');
+    state().refundSpell('dash'); assert.deepEqual(state().inventory, ['dash']);
+    configure(fixture(5, 1, false)); store.setState({ inventory: ['dash'] }); state().castSigil('dash');
+    assert.equal(commands.length, 1, 'a dash into a wall sends nothing'); assert.deepEqual(state().inventory, ['dash']);
+    store.setState({ inventory: ['phase'] }); state().castSigil('phase');
+    assert.equal(commands.length, 2); assert.equal(commands[1].steps.length, 1);
+    assert.equal(commands[1].stepMs, HERO_STEP_MS);
+    store.setState({ caughtBy: 'hunter' }); const before = state().heroCell;
+    state().commitStep(p(2), 'right', 200); assert.deepEqual(state().heroCell, before, 'no steps after capture');
+  } finally { detach(); }
 });
 
 const largest=generateWorld(LEVELS[19].blocks,77), started=performance.now();

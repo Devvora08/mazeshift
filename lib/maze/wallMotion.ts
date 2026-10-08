@@ -54,29 +54,80 @@ function motion(from: WallSegment, to: WallSegment, index: number): WallMotion {
   return { ...best, delay: (index % 5) * 0.025 };
 }
 
-/** Match identical walls first, then nearby changed walls, preferring shared hinges. */
+/** Grid-point key; wall endpoints sit on integer cell corners (mid-motion samples
+ * are rounded, which only affects bucketing, never the exact cost below). */
+function pointKey(x: number, y: number): string {
+  'worklet';
+  return `${Math.round(x)},${Math.round(y)}`;
+}
+
+function segmentKey(s: WallSegment): string {
+  'worklet';
+  const a = pointKey(s.x1, s.y1), b = pointKey(s.x2, s.y2);
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Pairs further apart than this collapse/grow in place instead of swinging across the maze. */
+const MAX_HINGE_DISTANCE = 1.5;
+
+/** Match identical walls first, then nearby changed walls, preferring shared hinges.
+ * Runs on the UI thread at every scramble, so both passes are hashed: identical
+ * walls by key, and pairing candidates only among walls with nearby endpoints
+ * (previously every changed wall was compared and sorted against every other). */
 export function planWallMotion(current: WallSegment[], target: WallSegment[]): WallScene {
   'worklet';
   const fixed: WallSegment[] = [];
   const moving: WallMotion[] = [];
-  const remaining = current.slice();
+  const byKey = new Map<string, number[]>();
+  for (let i = 0; i < current.length; i++) {
+    const key = segmentKey(current[i]);
+    const list = byKey.get(key);
+    if (list) list.push(i); else byKey.set(key, [i]);
+  }
+  const consumed = new Set<number>();
   const added: WallSegment[] = [];
   for (const wall of target) {
-    const index = remaining.findIndex(s => aligned(s, wall));
-    if (index >= 0) { fixed.push(wall); remaining.splice(index, 1); }
+    const list = byKey.get(segmentKey(wall));
+    let index = -1;
+    if (list) {
+      for (let k = 0; k < list.length; k++) {
+        if (aligned(current[list[k]], wall)) { index = list[k]; list.splice(k, 1); break; }
+      }
+    }
+    if (index >= 0) { fixed.push(wall); consumed.add(index); }
     else added.push(wall);
+  }
+  const remaining: WallSegment[] = [];
+  for (let i = 0; i < current.length; i++) if (!consumed.has(i)) remaining.push(current[i]);
+
+  // Bucket added walls by their endpoints so each removed wall only meets nearby ones.
+  const near = new Map<string, number[]>();
+  for (let j = 0; j < added.length; j++) {
+    const b = added[j];
+    for (const key of [pointKey(b.x1, b.y1), pointKey(b.x2, b.y2)]) {
+      const list = near.get(key);
+      if (list) { if (list[list.length - 1] !== j) list.push(j); } else near.set(key, [j]);
+    }
   }
 
   // Globally choose the closest pair before consuming either endpoint.
   const candidates: { source: number; target: number; cost: number }[] = [];
   for (let i = 0; i < remaining.length; i++) {
-    for (let j = 0; j < added.length; j++) {
-      const a = remaining[i];
+    const a = remaining[i];
+    const seen = new Set<number>();
+    for (const [px, py] of [[a.x1, a.y1], [a.x2, a.y2]]) {
+      const cx = Math.round(px), cy = Math.round(py);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        for (const j of near.get(`${cx + dx},${cy + dy}`) ?? []) seen.add(j);
+      }
+    }
+    for (const j of seen) {
       const b = added[j];
       const hingeDistance = Math.min(
         distance(a.x1, a.y1, b.x1, b.y1), distance(a.x1, a.y1, b.x2, b.y2),
         distance(a.x2, a.y2, b.x1, b.y1), distance(a.x2, a.y2, b.x2, b.y2),
       );
+      if (hingeDistance > MAX_HINGE_DISTANCE) continue;
       const centerDistance = distance((a.x1+a.x2)/2, (a.y1+a.y2)/2, (b.x1+b.x2)/2, (b.y1+b.y2)/2);
       candidates.push({ source: i, target: j, cost: hingeDistance * 10 + centerDistance });
     }

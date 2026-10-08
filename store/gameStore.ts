@@ -12,6 +12,9 @@ import { applyDestroy, findNearestWallTarget, type UtilityType } from '../lib/mo
 import { spawnMonsters, tickMonsters, touches, type Monster, type Travel, type WorldCell } from '../lib/modules/monsters';
 
 import { campaignPickups } from '../lib/levels/pickups';
+import { measure } from '../lib/perfProbe';
+import { isDisabled } from '../lib/perfFlags';
+import { heroDriver } from '../lib/hero/driver';
 import { DASH_STEPS, DASH_STEP_MS, SHIELD_MS, TRAP_LIFETIME_MS, triggerTraps, type PlacedTrap } from '../lib/modules/utilities/effects';
 
 export const HERO_STEP_MS = 200;
@@ -23,6 +26,20 @@ const FEEDBACK_MS = 1400;
 
 function pickupKey(blockId: string, cell: Position): string {
   return `${blockId}:${posKey(cell)}`;
+}
+
+/** The cell one legal step away (open edge, or a gateway facing `dir`), else null. */
+function legalStep(world: MazeWorld, from: WorldCell, dir: Direction): WorldCell | null {
+  const block = world.blocks.find((b) => b.id === from.blockId);
+  if (!block) return null;
+  const delta = DELTAS[dir];
+  const target: Position = { x: from.cell.x + delta.x, y: from.cell.y + delta.y };
+  if (block.maze.activeCells.has(posKey(target)) && block.maze.openEdges.has(edgeKey(from.cell, target))) {
+    return { blockId: from.blockId, cell: target };
+  }
+  const gateway = (world.gatewaysByBlock.get(from.blockId) ?? [])
+    .find((g) => g.direction === dir && posKey(g.fromCell) === posKey(from.cell));
+  return gateway ? { blockId: gateway.toBlockId, cell: gateway.toCell } : null;
 }
 
 interface GameState {
@@ -65,6 +82,12 @@ interface GameState {
   move: (dir: Direction) => boolean;
   /** UI calls this once the move's slide animation finishes, unblocking the next input. */
   finishMove: () => void;
+  /** The UI-thread hero engine already validated and began this step; record it. */
+  commitStep: (to: WorldCell, dir: Direction, duration: number) => void;
+  /** The hero turned in place (held into a wall); spells aim along `facing`. */
+  setFacing: (dir: Direction) => void;
+  /** A forced move was rejected by the hero engine; give the spell back. */
+  refundSpell: (type: UtilityType) => void;
   /** A location-independent sigil was recognized — acquire it if the hero stands on the
    *  matching pickup, otherwise cast it from inventory using only the hero's state. */
   castSigil: (type: UtilityType) => void;
@@ -176,6 +199,23 @@ export const useGameStore = create<GameState>((set, get) => ({
     return false;
   },
 
+  commitStep: (to, dir, duration) => {
+    const s = get();
+    if (!s.world || !s.currentBlockId || !s.heroCell || s.caughtBy || s.reachedExit) return;
+    set({
+      heroCell: to.cell, currentBlockId: to.blockId, facing: dir, isMoving: true,
+      heroTravel: { from: { blockId: s.currentBlockId, cell: s.heroCell }, to, startedAt: s.simulationTime, duration },
+    });
+  },
+
+  setFacing: (dir) => {
+    if (get().facing !== dir) set({ facing: dir });
+  },
+
+  refundSpell: (type) => {
+    set({ inventory: [...get().inventory, type], feedback: { message: 'Blocked — try again', until: Date.now() + FEEDBACK_MS } });
+  },
+
   finishMove: () => {
     const state = get();
     if (state.paused || state.caughtBy) return;
@@ -196,7 +236,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       dashRemaining: reachedExit ? 0 : state.dashRemaining,
       dashDirection: !reachedExit && state.dashRemaining > 0 ? state.dashDirection : null });
     // Dash chains legal individual steps, so walls, gateways and contacts all apply.
-    if (!reachedExit && state.dashRemaining > 0 && state.dashDirection && !get().move(state.dashDirection)) {
+    // With a UI hero engine attached, it performs the dash steps itself.
+    if (!heroDriver() && !reachedExit && state.dashRemaining > 0 && state.dashDirection && !get().move(state.dashDirection)) {
       set({ dashRemaining: 0, dashDirection: null });
     }
   },
@@ -226,15 +267,16 @@ export const useGameStore = create<GameState>((set, get) => ({
         caughtBy: caught.type, isMoving: false, stalkerAlert: false, dashRemaining: 0, dashDirection: null });
       return;
     }
+    if (isDisabled('monsterAI')) { set({ simulationTime: now, traps: trapped.traps }); return; }
     const sensedHero = s.heroTravel && now < s.heroTravel.startedAt + s.heroTravel.duration / 2 ? s.heroTravel.from : hero;
-    const result = tickMonsters(s.world, trapped.monsters, sensedHero, now,
-      { crossBlocks: s.level?.monstersCrossBlocks });
+    const result = measure('monsters', () => tickMonsters(s.world!, trapped.monsters, sensedHero, now,
+      { crossBlocks: s.level?.monstersCrossBlocks }));
     set({ simulationTime: now, world: result.world, monsters: result.monsters, traps: trapped.traps, stalkerAlert: result.alert });
   },
 
   checkScramble: (now) => {
     const s = get();
-    if (!s.level || !s.world || !s.rng || s.paused || s.caughtBy || s.reachedExit) return;
+    if (!s.level || !s.world || !s.rng || s.paused || s.caughtBy || s.reachedExit || isDisabled('scramble')) return;
     const result = tickScramble({ config: s.level.scramble, world: s.world, rng: s.rng, now,
       nextScrambleAt: s.nextScrambleAt, travels: [s.heroTravel, ...s.monsters.map(m => m.travel)] });
     if (result.type === 'idle' || result.type === 'notDue') return;
@@ -286,6 +328,20 @@ export const useGameStore = create<GameState>((set, get) => ({
       set({ world: nextWorld, inventory: nextInventory, scrambleFlashUntil: Date.now() + 1050 });
       say('Every block scrambled'); return;
     }
+    const driver = heroDriver();
+    if (type === 'dash' && driver) {
+      const from = { blockId: currentBlockId, cell: heroCell };
+      const steps: WorldCell[] = [];
+      for (let at = from; steps.length < DASH_STEPS;) {
+        const next = legalStep(world, at, facing);
+        if (!next) break;
+        steps.push(next); at = next;
+      }
+      if (!steps.length) { say('No open path ahead'); return; }
+      set({ inventory: nextInventory });
+      driver.force({ from, steps, direction: facing, stepMs: DASH_STEP_MS, refund: type });
+      say('Dash!'); return;
+    }
     if (type === 'dash') {
       set({ dashRemaining: DASH_STEPS, dashDirection: facing });
       if (!get().move(facing)) {
@@ -303,6 +359,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       blocks[blockIndex] = { ...block, maze: applyDestroy(block.maze, target) };
       set({ world: { ...world, blocks }, inventory: nextInventory });
       say('Wall destroyed');
+    } else if (driver) {
+      set({ inventory: nextInventory });
+      driver.force({ from: { blockId: currentBlockId, cell: heroCell },
+        steps: [{ blockId: currentBlockId, cell: target.neighbor }], direction: facing,
+        stepMs: HERO_STEP_MS, refund: type });
+      say('Phased through');
     } else {
       set({ heroCell: target.neighbor, inventory: nextInventory, isMoving: true,
         heroTravel: { from: { blockId: currentBlockId, cell: heroCell }, to: { blockId: currentBlockId, cell: target.neighbor },

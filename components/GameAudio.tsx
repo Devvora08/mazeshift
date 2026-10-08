@@ -7,7 +7,9 @@ import { useProgressStore } from '../store/progressStore';
 const GAME_MUSIC_GAP_MS = 3000;
 const SCRAMBLE_WARNING_MS = 5000;
 
-export const GameAudio = memo(function GameAudio({ heroRunning }: { heroRunning: boolean }) {
+export const GameAudio = memo(function GameAudio({ heroHeld }: { heroHeld: boolean }) {
+  const heroMoving = useGameStore((state) => state.isMoving);
+  const heroRunning = heroHeld || heroMoving;
   const musicEnabled = useProgressStore((state) => state.settings.musicEnabled);
   const soundEffectsEnabled = useProgressStore((state) => state.settings.soundEffectsEnabled);
   const nextScrambleAt = useGameStore((state) => state.nextScrambleAt);
@@ -66,10 +68,16 @@ export const GameAudio = memo(function GameAudio({ heroRunning }: { heroRunning:
     win.volume = 0.32;
   }, [music, footsteps, timer, scramble, grunt, lose, win]);
 
+  // A play() issued before the source finishes loading can be dropped on Android,
+  // leaving a level silent; wait for the load, then start (or restart a finished track).
+  const musicLoaded = musicStatus.isLoaded;
   useEffect(() => {
-    if (musicActive) music.play();
-    else music.pause();
-  }, [musicActive, music]);
+    if (!musicLoaded) return;
+    if (!musicActive) { music.pause(); return; }
+    const finished = music.duration > 0 && music.currentTime >= music.duration - 0.05;
+    if (finished) replay(music);
+    else music.play();
+  }, [musicActive, musicLoaded, music, replay]);
 
   useEffect(() => {
     if (!musicStatus.didJustFinish || !musicActive) return;

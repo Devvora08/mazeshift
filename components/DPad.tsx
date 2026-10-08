@@ -1,11 +1,14 @@
-import { memo, useCallback, useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   interpolateColor,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  type SharedValue,
 } from 'react-native-reanimated';
 
 import type { Direction } from '../store/gameStore';
@@ -13,6 +16,9 @@ import { useProgressStore } from '../store/progressStore';
 
 interface DPadProps {
   size?: number;
+  /** Written on the UI thread the instant a key goes down or up; the hero engine reads it. */
+  held: SharedValue<Direction | null>;
+  /** Notified afterwards on the JS thread (audio, bookkeeping); movement never waits on it. */
   onDirectionChange: (direction: Direction | null) => void;
 }
 
@@ -21,13 +27,14 @@ const ROTATION: Record<Direction, string> = {
 };
 const SPRING = { damping: 15, stiffness: 330, mass: 0.6 };
 
-const DirectionKey = memo(function DirectionKey({ direction, size, onDown, onUp }: {
+const DirectionKey = memo(function DirectionKey({ direction, size, pressed, held, onChange }: {
   direction: Direction;
   size: number;
-  onDown: (direction: Direction) => void;
-  onUp: (direction: Direction) => void;
+  /** Keys currently down, most recent last; the newest one wins. */
+  pressed: SharedValue<Direction[]>;
+  held: SharedValue<Direction | null>;
+  onChange: (direction: Direction | null, pressedNow: boolean) => void;
 }) {
-  const hapticsEnabled = useProgressStore((state) => state.settings.hapticsEnabled);
   const press = useSharedValue(0);
   const faceStyle = useAnimatedStyle(() => ({
     transform: [
@@ -42,60 +49,71 @@ const DirectionKey = memo(function DirectionKey({ direction, size, onDown, onUp 
     transform: [{ scale: 0.95 + press.value * 0.12 }],
   }));
 
+  // UI-thread touch handling: a press reaches the hero engine on the same frame.
+  const gesture = useMemo(() => Gesture.LongPress()
+    .minDuration(0)
+    .maxDistance(10000)
+    .shouldCancelWhenOutside(false)
+    .onBegin(() => {
+      'worklet';
+      const next = pressed.value.filter(d => d !== direction);
+      next.push(direction);
+      pressed.value = next;
+      held.value = direction;
+      press.value = withSpring(1, SPRING);
+      runOnJS(onChange)(direction, true);
+    })
+    .onFinalize(() => {
+      'worklet';
+      const next = pressed.value.filter(d => d !== direction);
+      pressed.value = next;
+      const top = next.length ? next[next.length - 1] : null;
+      held.value = top;
+      press.value = withSpring(0, SPRING);
+      runOnJS(onChange)(top, false);
+    }), [direction, pressed, held, press, onChange]);
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Move ${direction}`}
-      onPressIn={() => {
-        onDown(direction);
-        press.value = withSpring(1, SPRING);
-        if (hapticsEnabled) void Haptics.selectionAsync().catch(() => {});
-      }}
-      onPressOut={() => {
-        onUp(direction);
-        press.value = withSpring(0, SPRING);
-      }}
-      style={[styles.key, { width: size, height: size }]}
-    >
-      <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]} />
-      <View pointerEvents="none" style={styles.keyBase} />
-      <Animated.View pointerEvents="none" style={[styles.keyFace, faceStyle]}>
-        <View style={{ transform: [{ rotate: ROTATION[direction] }] }}>
-          <View style={styles.chevron} />
-        </View>
-        <View style={styles.keyHighlight} />
-      </Animated.View>
-    </Pressable>
+    <GestureDetector gesture={gesture}>
+      <View accessible accessibilityRole="button" accessibilityLabel={`Move ${direction}`}
+        style={[styles.key, { width: size, height: size }]}>
+        <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]} />
+        <View pointerEvents="none" style={styles.keyBase} />
+        <Animated.View pointerEvents="none" style={[styles.keyFace, faceStyle]}>
+          <View style={{ transform: [{ rotate: ROTATION[direction] }] }}>
+            <View style={styles.chevron} />
+          </View>
+          <View style={styles.keyHighlight} />
+        </Animated.View>
+      </View>
+    </GestureDetector>
   );
 });
 
 /** Explicit grid slots keep layout independent of Pressable's pressed-style handling. */
-export const DPad = memo(function DPad({ size = 192, onDirectionChange }: DPadProps) {
+export const DPad = memo(function DPad({ size = 192, held, onDirectionChange }: DPadProps) {
   const gap = 6;
   const padding = 12;
   const keySize = (size - padding * 2 - gap * 2) / 3;
-  const pressedDirections = useRef<Direction[]>([]);
+  const pressed = useSharedValue<Direction[]>([]);
+  const hapticsEnabled = useProgressStore((state) => state.settings.hapticsEnabled);
   const [active, setActive] = useState<Direction | null>(null);
   const tiltX = useSharedValue(0);
   const tiltY = useSharedValue(0);
   const energy = useSharedValue(0);
 
-  const update = useCallback((direction: Direction | null) => {
+  // JS-side follow-up only: visuals, haptics and the screen's audio bookkeeping.
+  const handleChange = useCallback((direction: Direction | null, pressedNow: boolean) => {
     setActive(direction);
     onDirectionChange(direction);
     tiltX.value = withSpring(direction === 'left' ? -3 : direction === 'right' ? 3 : 0, SPRING);
     tiltY.value = withSpring(direction === 'up' ? -3 : direction === 'down' ? 3 : 0, SPRING);
     energy.value = withSpring(direction ? 1 : 0, SPRING);
-  }, [onDirectionChange, tiltX, tiltY, energy]);
+    if (pressedNow && hapticsEnabled) void Haptics.selectionAsync().catch(() => {});
+  }, [onDirectionChange, tiltX, tiltY, energy, hapticsEnabled]);
 
-  const down = useCallback((direction: Direction) => {
-    pressedDirections.current = [...pressedDirections.current.filter(d => d !== direction), direction];
-    update(direction);
-  }, [update]);
-  const up = useCallback((direction: Direction) => {
-    pressedDirections.current = pressedDirections.current.filter(d => d !== direction);
-    update(pressedDirections.current[pressedDirections.current.length - 1] ?? null);
-  }, [update]);
+  // Remounting (pause, retry) must never leave a stale direction held.
+  useEffect(() => () => { held.value = null; }, [held]);
 
   const coreStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: tiltX.value }, { translateY: tiltY.value },
@@ -104,7 +122,7 @@ export const DPad = memo(function DPad({ size = 192, onDirectionChange }: DPadPr
   }));
 
   const key = (direction: Direction) => (
-    <DirectionKey direction={direction} size={keySize} onDown={down} onUp={up} />
+    <DirectionKey direction={direction} size={keySize} pressed={pressed} held={held} onChange={handleChange} />
   );
   const empty = <View pointerEvents="none" style={{ width: keySize, height: keySize }} />;
 

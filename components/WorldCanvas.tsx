@@ -1,14 +1,13 @@
 import {
   Atlas, Canvas, Circle, Group, Image, type SkImage, Skia, rect,
 } from '@shopify/react-native-skia';
-import { memo, useEffect, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, StyleSheet } from 'react-native';
 import {
   Easing,
-  cancelAnimation,
   type SharedValue,
-  runOnJS,
   useDerivedValue,
+  useFrameCallback,
   useSharedValue,
   withRepeat,
   withTiming,
@@ -17,23 +16,21 @@ import {
 import { BlockWalls } from './BlockWalls';
 import { MonsterLayer } from './MonsterLayer';
 import type { PlacedTrap } from '../lib/modules/utilities/effects';
-import { HERO_STEP_MS, useGameStore } from '../store/gameStore';
+import { useGameStore } from '../store/gameStore';
+import { useHeroMotion } from './heroMotion';
 import { HERO_SHEETS, type HeroAnimationName } from '../lib/sprites/heroFrames';
 import { useCachedImage } from '../lib/sprites/imageCache';
+import { useDisabledFlags } from '../lib/perfFlags';
 import type { Direction, MazeWorld } from '../lib/maze/world';
-import type { Position } from '../lib/maze/types';
 import { SPELL_COLORS, SPELL_ICONS, type UtilityType } from '../lib/modules/utilities';
-import { useSpriteLoop } from '../hooks/useSpriteLoop';
 
 interface WorldCanvasProps {
   world: MazeWorld;
   currentBlockId: string;
-  heroCell: Position;
-  facing: Direction;
-  /** Whether the player is currently holding a movement direction (drives idle vs. run sprite —
-   *  intentionally NOT the same as "a single step's slide animation is in flight", which flips
-   *  true/false every ~220ms during continuous movement and would flicker the sprite sheet). */
-  isHolding: boolean;
+  /** Held D-pad direction, written on the UI thread by the D-pad gestures. */
+  held: SharedValue<Direction | null>;
+  /** JS callbacks for the UI-thread hero engine; see components/heroMotion. */
+  onStepStart: () => void;
   onMoveComplete: () => void;
   /** keyed by "blockId:x,y", same shape as gameStore's pickups map. */
   pickups: Map<string, UtilityType>;
@@ -49,8 +46,6 @@ interface WorldCanvasProps {
 const RUN_FPS = 12;
 const IDLE_FPS = 6;
 const HERO_HEIGHT_IN_CELLS = 1.7;
-const CAMERA_DURATION = 700;
-const MOVE_DURATION = HERO_STEP_MS;
 
 function cellSizeForWorld(world: MazeWorld, viewportWidth: number, viewportHeight: number): number {
   const maxBlockWidth = Math.max(...world.blocks.map((b) => b.maze.width));
@@ -138,9 +133,10 @@ const HERO_ANIMATIONS = Object.keys(HERO_SHEETS) as HeroAnimationName[];
  * direction records an Atlas or runs a frame clock, so direction changes are
  * atomic without giving up the single-active-Atlas rendering optimization.
  */
-const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, worldY, paused }: {
+const HeroSprite = memo(function HeroSprite({ name, animation, cellSize, worldX, worldY, paused }: {
   name: HeroAnimationName;
-  active: boolean;
+  /** Chosen on the UI thread each frame by the hero engine. */
+  animation: SharedValue<HeroAnimationName>;
   paused: boolean;
   cellSize: number;
   worldX: SharedValue<number>;
@@ -150,28 +146,40 @@ const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, wo
   const image = useCachedImage(sheet.asset);
   // Eight drawings take the same cycle time as five, rather than slowing the gait.
   const fps = name === 'idle' ? IDLE_FPS : RUN_FPS * sheet.frames.length / 5;
-  const frame = useSpriteLoop(sheet.frames.length, active && !paused ? fps : 0);
+  const count = sheet.frames.length;
+  const cycleMs = count * 1000 / fps;
+  const frame = useSharedValue(0);
+  const elapsed = useSharedValue(0);
+  // The frame clock reads the UI-thread animation choice, so a direction change
+  // swaps sheets on the very next frame with no JavaScript round trip.
+  useFrameCallback((info) => {
+    'worklet';
+    if (paused || animation.value !== name) { elapsed.value = 0; frame.value = 0; return; }
+    const delta = info.timeSincePreviousFrame ?? 0;
+    elapsed.value = (elapsed.value + (delta > 250 ? 0 : delta)) % cycleMs;
+    frame.value = Math.min(count - 1, Math.floor(elapsed.value * fps / 1000));
+  });
   const scale = cellSize * HERO_HEIGHT_IN_CELLS / sheet.frames[0].height;
+  // Inactive sheets submit nothing, so only one hero Atlas draws per frame.
   const sprites = useDerivedValue(() => {
+    if (animation.value !== name) return [];
     const f = sheet.frames[frame.value] ?? sheet.frames[0];
     return [rect(f.x, f.y, f.width, f.height)];
   });
   const transforms = useDerivedValue(() => {
+    if (animation.value !== name) return [];
     const f = sheet.frames[frame.value] ?? sheet.frames[0];
     return [Skia.RSXform(scale, 0, worldX.value - f.width * scale / 2,
       worldY.value - f.height * scale)];
   });
-  return active && image
-    ? <Atlas image={image} sprites={sprites} transforms={transforms} />
-    : null;
+  return image ? <Atlas image={image} sprites={sprites} transforms={transforms} /> : null;
 });
 
 export const WorldCanvas = memo(function WorldCanvas({
   world,
   currentBlockId,
-  heroCell,
-  facing,
-  isHolding,
+  held,
+  onStepStart,
   onMoveComplete,
   pickups,
   allowedUtilities,
@@ -183,6 +191,7 @@ export const WorldCanvas = memo(function WorldCanvas({
   height,
 }: WorldCanvasProps) {
   const cellSize = useMemo(() => cellSizeForWorld(world, width, height), [world, width, height]);
+  const disabledFlags = useDisabledFlags();
 
   // Fixed set of hooks (one per spell, never conditional) so every icon is decoded once and
   // reused across however many pickups of that type appear in the world.
@@ -198,7 +207,6 @@ export const WorldCanvas = memo(function WorldCanvas({
     dash: dashIcon, shield: shieldIcon, trap: trapIcon,
   };
 
-  const currentBlock = world.blocks.find((b) => b.id === currentBlockId) ?? world.blocks[0];
   const endBlock = world.blocks[world.blocks.length - 1];
 
   const nearbyBlockIds = useMemo(() => new Set([
@@ -242,76 +250,33 @@ export const WorldCanvas = memo(function WorldCanvas({
     return map;
   }, [world]);
 
-  // Camera pans (translate only, no zoom) so the current block's center sits in the viewport center.
-  const cameraX = useSharedValue(0);
-  const cameraY = useSharedValue(0);
-  const cameraInitialized = useSharedValue(false);
-
-  useEffect(() => {
-    // Anchor the current block near the viewport's top rather than fully centering it — full
-    // centering left a symmetric gap around every block that isn't exactly viewport-shaped, which
-    // read as dead space right under the header. Splitting the leftover space (mostly toward the
-    // bottom, a little toward the top) balances the two complaints.
-    const marginX = cellSize * 0.6;
-    const leftoverY = height - currentBlock.maze.height * cellSize;
-    const marginY = Math.max(cellSize * 0.6, leftoverY * 0.25);
-    const targetX = marginX - currentBlock.worldOffsetX * cellSize;
-    const targetY = marginY - currentBlock.worldOffsetY * cellSize;
-    if (!cameraInitialized.value) {
-      cameraX.value = targetX;
-      cameraY.value = targetY;
-      cameraInitialized.value = true;
-    } else {
-      cameraX.value = withTiming(targetX, { duration: CAMERA_DURATION, easing: Easing.inOut(Easing.cubic) });
-      cameraY.value = withTiming(targetY, { duration: CAMERA_DURATION, easing: Easing.inOut(Easing.cubic) });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentBlockId, cellSize, width, height]);
+  // The hero engine runs on the UI thread; these stable callbacks forward its
+  // reports to the store without making the engine depend on React renders.
+  const callbacks = useRef({ onStepStart, onMoveComplete });
+  callbacks.current = { onStepStart, onMoveComplete };
+  const handleStepStart = useCallback((blockId: string, x: number, y: number, dir: Direction, duration: number) => {
+    callbacks.current.onStepStart();
+    useGameStore.getState().commitStep({ blockId, cell: { x, y } }, dir, duration);
+  }, []);
+  const handleStepEnd = useCallback(() => callbacks.current.onMoveComplete(), []);
+  const handleFace = useCallback((dir: Direction) => useGameStore.getState().setFacing(dir), []);
+  const handleRefund = useCallback((type: UtilityType) => useGameStore.getState().refundSpell(type), []);
+  // Mounted per run (keyed by runId), so the store's hero position here is the start.
+  const start = useRef<{ blockId: string; x: number; y: number; facing: Direction } | null>(null);
+  if (!start.current) {
+    const s = useGameStore.getState();
+    start.current = { blockId: s.currentBlockId ?? currentBlockId, x: s.heroCell?.x ?? 0, y: s.heroCell?.y ?? 0, facing: s.facing };
+  }
+  const { heroX: heroWorldX, heroY: heroWorldY, animation, cameraX, cameraY } = useHeroMotion({
+    world, start: start.current, cellSize, viewportHeight: height, held, halted: paused,
+    onStepStart: handleStepStart, onStepEnd: handleStepEnd, onFace: handleFace, onRefund: handleRefund,
+  });
 
   const cameraTransform = useDerivedValue(() => [
     { translateX: cameraX.value },
     { translateY: cameraY.value },
   ]);
 
-  // Hero world position, tweened smoothly between cells (and across block transitions).
-  const heroWorldX = useSharedValue(
-    (currentBlock.worldOffsetX + heroCell.x + 0.5) * cellSize
-  );
-  const heroWorldY = useSharedValue((currentBlock.worldOffsetY + heroCell.y + 1) * cellSize);
-  const heroInitialized = useSharedValue(false);
-
-  useEffect(() => {
-    const targetX = (currentBlock.worldOffsetX + heroCell.x + 0.5) * cellSize;
-    const targetY = (currentBlock.worldOffsetY + heroCell.y + 1) * cellSize;
-    if (paused) {
-      cancelAnimation(heroWorldX); cancelAnimation(heroWorldY);
-      return;
-    }
-    if (!heroInitialized.value) {
-      heroWorldX.value = targetX;
-      heroWorldY.value = targetY;
-      heroInitialized.value = true;
-    } else {
-      // An unchanged axis completes immediately in Reanimated. Only the moving
-      // axis may unlock the next step, otherwise horizontal moves chain too early.
-      const movesHorizontally = targetX !== heroWorldX.value;
-      const onFinished = (finished?: boolean) => {
-        'worklet';
-        if (finished) runOnJS(onMoveComplete)();
-      };
-      const state = useGameStore.getState();
-      const remaining = state.heroTravel
-        ? Math.max(1, state.heroTravel.startedAt + state.heroTravel.duration - state.simulationTime) : MOVE_DURATION;
-      heroWorldX.value = withTiming(targetX, { duration: remaining, easing: Easing.linear },
-        movesHorizontally ? onFinished : undefined);
-      heroWorldY.value = withTiming(targetY, { duration: remaining, easing: Easing.linear },
-        movesHorizontally ? undefined : onFinished);
-    }
-    return () => { cancelAnimation(heroWorldX); cancelAnimation(heroWorldY); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [heroCell.x, heroCell.y, currentBlockId, cellSize, onMoveComplete, paused]);
-
-  const animationName: HeroAnimationName = isHolding ? facing : 'idle';
   const auraY = useDerivedValue(() => heroWorldY.value - cellSize * 0.8);
   const exitWorldX = (endBlock.worldOffsetX + endBlock.maze.end.x + 0.5) * cellSize;
   const exitWorldY = (endBlock.worldOffsetY + endBlock.maze.end.y + 0.5) * cellSize;
@@ -336,7 +301,7 @@ export const WorldCanvas = memo(function WorldCanvas({
 
     {/* Ambient effects update continuously, but no longer invalidate walls or
         the hero Atlas. Skip the exit radar until its block is nearby. */}
-    <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+    {!disabledFlags.has('pickups') && <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
       <Group transform={cameraTransform}>
         {nearbyBlockIds.has(endBlock.id) &&
           <ExitRadar x={exitWorldX} y={exitWorldY} cellSize={cellSize} />}
@@ -359,7 +324,7 @@ export const WorldCanvas = memo(function WorldCanvas({
           </Group>;
         })}
       </Group>
-    </Canvas>
+    </Canvas>}
 
     {/* Hero movement/frame ticks stay on a tiny independent canvas, so held
         movement remains smooth while walls and ambient effects are busy. */}
@@ -373,14 +338,14 @@ export const WorldCanvas = memo(function WorldCanvas({
           color="#facc15" style="stroke" strokeWidth={3} opacity={0.8} />}
 
         {HERO_ANIMATIONS.map(name => (
-          <HeroSprite key={name} name={name} active={animationName === name}
+          <HeroSprite key={name} name={name} animation={animation}
             cellSize={cellSize} worldX={heroWorldX} worldY={heroWorldY} paused={paused} />
         ))}
       </Group>
     </Canvas>
 
-    <MonsterLayer world={world} currentBlockId={currentBlockId} cellSize={cellSize}
-      cameraTransform={cameraTransform} paused={paused} />
+    {!disabledFlags.has('monsterDraw') && <MonsterLayer world={world} currentBlockId={currentBlockId} cellSize={cellSize}
+      cameraTransform={cameraTransform} paused={paused} />}
     </View>
   );
 });
