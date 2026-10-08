@@ -69,10 +69,23 @@ function savedPart(state: ProgressState): SavedProfile {
     activeRun: state.activeRun, settings: state.settings, premiumUnlocked: state.premiumUnlocked };
 }
 
+/** A recorded best time of zero (or less) can only come from a mis-recorded run. */
+function repairLevels(levels: Record<string, LevelRecord>): Record<string, LevelRecord> {
+  let repaired = levels;
+  for (const [id, record] of Object.entries(levels)) {
+    if (record.bestTimeMs !== null && !(record.bestTimeMs > 0)) {
+      if (repaired === levels) repaired = { ...levels };
+      repaired[id] = { ...record, bestTimeMs: null };
+    }
+  }
+  return repaired;
+}
+
 export const useProgressStore = create<ProgressState>((set, get) => {
   const commit = (patch: Partial<SavedProfile>) => set(state => {
-    const next = { ...savedPart(state), ...patch };
-    persist(next);
+    // Never write before the saved profile has loaded: the in-memory defaults
+    // would overwrite real progress on disk.
+    if (state.hydrated) persist({ ...savedPart(state), ...patch });
     return patch;
   });
 
@@ -87,12 +100,15 @@ export const useProgressStore = create<ProgressState>((set, get) => {
             settings?: Partial<SavedProfile['settings']> & { audioEnabled?: boolean };
           };
           const legacyAudio = saved.settings?.audioEnabled;
-          set({ ...defaultProfile, ...saved,
+          const savedLevels = saved.levels ?? {};
+          const levels = repairLevels(savedLevels);
+          set({ ...defaultProfile, ...saved, levels,
             settings: {
               musicEnabled: saved.settings?.musicEnabled ?? legacyAudio ?? true,
               soundEffectsEnabled: saved.settings?.soundEffectsEnabled ?? legacyAudio ?? true,
               hapticsEnabled: saved.settings?.hapticsEnabled ?? true,
             }, hydrated: true });
+          if (levels !== savedLevels) persist(savedPart(get()));
           return;
         }
       } catch (error) {
@@ -127,7 +143,9 @@ export const useProgressStore = create<ProgressState>((set, get) => {
       commit({
         highestUnlockedLevel: Math.min(20, Math.max(current.highestUnlockedLevel, levelId + 1)),
         levels: { ...current.levels, [levelId]: { ...old, completed: true,
-          bestTimeMs: old.bestTimeMs === null ? elapsedMs : Math.min(old.bestTimeMs, elapsedMs),
+          // A real clear always takes time; never let a zero overwrite a best.
+          bestTimeMs: !(elapsedMs > 0) ? old.bestTimeMs
+            : old.bestTimeMs === null ? elapsedMs : Math.min(old.bestTimeMs, elapsedMs),
           lastCompletedAt: new Date().toISOString() } },
         activeRun: null,
       });

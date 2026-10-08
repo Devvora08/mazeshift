@@ -1,6 +1,6 @@
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Pressable, Text, View } from 'react-native';
+import { Alert, AppState, Pressable, Text, View } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
 import { DPad } from '../../components/DPad';
@@ -14,6 +14,7 @@ import type { Direction } from '../../store/gameStore';
 import { useGameStore } from '../../store/gameStore';
 import { formatRunTime, useProgressStore } from '../../store/progressStore';
 import { UNLOCK_ALL_LEVELS } from '../../lib/devUnlock';
+import { screenOwnsRun } from '../../lib/runGuard';
 import { count, measure } from '../../lib/perfProbe';
 import { useDisabledFlags } from '../../lib/perfFlags';
 
@@ -63,6 +64,12 @@ export default function GameScreen() {
   const heldShared = useSharedValue<Direction | null>(null);
   const baseElapsed = useRef(0);
   const recordedDeathRun = useRef<number | null>(null);
+  /** The run this screen loaded; progress is only ever recorded for it. */
+  const loadedRun = useRef<number | null>(null);
+  /** Load once per visit, even if purchase or hydration state changes mid-run. */
+  const loadedKey = useRef<string | null>(null);
+  const ownsRun = useCallback(
+    () => screenOwnsRun(useGameStore.getState(), loadedRun.current, levelId), [levelId]);
   const recordedWinRun = useRef<number | null>(null);
   const heldDirection = useRef<Direction | null>(null);
   const screenActive = useRef(false);
@@ -102,11 +109,15 @@ export default function GameScreen() {
 
   useEffect(() => {
     if (!progressHydrated) return;
+    const key = `${levelId}:${resume ?? ''}`;
+    if (loadedKey.current === key) return;
     const progress = useProgressStore.getState();
     if (!UNLOCK_ALL_LEVELS && (levelId > progress.highestUnlockedLevel || (levelId > 10 && !progress.premiumUnlocked))) return;
     const continued = resume === '1' && progress.activeRun?.levelId === levelId;
     baseElapsed.current = continued ? progress.activeRun!.elapsedMs : 0;
     loadLevel(levelId);
+    loadedKey.current = key;
+    loadedRun.current = useGameStore.getState().runId;
     if (!continued) progress.startRun(levelId);
     previousTick.current = performance.now();
   }, [levelId, resume, loadLevel, progressHydrated, premiumUnlocked]);
@@ -116,28 +127,54 @@ export default function GameScreen() {
   }, [progressHydrated, highestUnlockedLevel, premiumUnlocked, levelId]);
 
   useEffect(() => {
-    if (levelId === 0) return;
-    const elapsed = baseElapsed.current + useGameStore.getState().simulationTime;
-    if (caughtBy && recordedDeathRun.current !== runId) {
-      recordedDeathRun.current = runId;
+    // Read the outcome from the store and only for this screen's own run: a new
+    // screen's first render can still carry the previous level's win or death.
+    if (levelId === 0 || !ownsRun()) return;
+    const game = useGameStore.getState();
+    const elapsed = baseElapsed.current + game.simulationTime;
+    if (game.caughtBy && recordedDeathRun.current !== game.runId) {
+      recordedDeathRun.current = game.runId;
       useProgressStore.getState().recordDeath(levelId, elapsed);
     }
-    if (reachedExit && recordedWinRun.current !== runId) {
-      recordedWinRun.current = runId;
+    if (game.reachedExit && recordedWinRun.current !== game.runId) {
+      recordedWinRun.current = game.runId;
       useProgressStore.getState().completeLevel(levelId, elapsed);
     }
-  }, [caughtBy, reachedExit, runId, levelId]);
+  }, [caughtBy, reachedExit, runId, levelId, ownsRun]);
 
   useEffect(() => {
     if (levelId === 0 || reachedExit) return;
-    const interval = setInterval(() => {
-      useProgressStore.getState().checkpointRun(levelId, baseElapsed.current + useGameStore.getState().simulationTime);
-    }, 2000);
-    return () => {
-      clearInterval(interval);
+    const checkpoint = () => {
+      if (!ownsRun()) return;
       useProgressStore.getState().checkpointRun(levelId, baseElapsed.current + useGameStore.getState().simulationTime);
     };
-  }, [levelId, reachedExit]);
+    const interval = setInterval(checkpoint, 2000);
+    return () => {
+      clearInterval(interval);
+      checkpoint();
+    };
+  }, [levelId, reachedExit, ownsRun]);
+
+  // Leaving mid-run (Android back) asks first and pauses while asking. The run is
+  // already checkpointed, so leaving keeps it available as Continue on the home screen.
+  const navigation = useNavigation();
+  useEffect(() => navigation.addListener('beforeRemove', (event) => {
+    const game = useGameStore.getState();
+    if (levelId === 0 || !ownsRun() || game.caughtBy || game.reachedExit) return;
+    event.preventDefault();
+    const wasPaused = game.paused;
+    clearInput();
+    game.setPaused(true);
+    const stay = () => {
+      if (wasPaused || AppState.currentState !== 'active') return;
+      previousTick.current = performance.now();
+      useGameStore.getState().setPaused(false);
+    };
+    Alert.alert('Leave this level?', 'Your run is saved. You can continue it from the home screen.', [
+      { text: 'Keep playing', style: 'cancel', onPress: stay },
+      { text: 'Leave', style: 'destructive', onPress: () => navigation.dispatch(event.data.action) },
+    ], { cancelable: true, onDismiss: stay });
+  }), [navigation, levelId, ownsRun, clearInput]);
 
   useEffect(() => {
     const simulationInterval = setInterval(() => {
@@ -196,7 +233,7 @@ export default function GameScreen() {
       <Text className="font-hand text-2xl text-ink">
         {level ? `${level.id}. ${level.title}` : 'Loading...'}
         {__DEV__ ? ' · PERF-4' : ''}
-        {UNLOCK_ALL_LEVELS ? ' · test build B10' : ''}
+        {UNLOCK_ALL_LEVELS ? ' · test build B11' : ''}
       </Text>
       <Text className={`font-script text-base ${isFlashing ? 'text-ink' : 'text-ink-soft'}`}>
         {caughtBy
@@ -266,7 +303,8 @@ export default function GameScreen() {
           <Pressable accessibilityRole="button" accessibilityLabel="Retry level"
             className="mt-4 rounded-xl bg-ink px-8 py-3" onPress={() => {
               clearInput(); baseElapsed.current = 0; useProgressStore.getState().startRun(levelId);
-              loadLevel(levelId); previousTick.current = performance.now();
+              loadLevel(levelId); loadedRun.current = useGameStore.getState().runId;
+              previousTick.current = performance.now();
             }}>
             <Text className="font-hand text-xl text-paper">Try again</Text>
           </Pressable>
