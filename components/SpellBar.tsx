@@ -14,10 +14,12 @@ const SLOT = 44;
  * level; a count shows only when more than one charge is held. Fixed height, so
  * collecting or spending a spell never shifts the D-pad.
  */
-export const SpellBar = memo(function SpellBar({ order, inventory, onCast }: {
+export const SpellBar = memo(function SpellBar({ order, inventory, onCast, hint }: {
   order: UtilityType[];
   inventory: UtilityType[];
   onCast: (type: UtilityType) => void;
+  /** Shown while no spells are held, to teach collecting in place. */
+  hint?: string;
 }) {
   const hapticsEnabled = useProgressStore((state) => state.settings.hapticsEnabled);
   const counts = new Map<UtilityType, number>();
@@ -27,6 +29,10 @@ export const SpellBar = memo(function SpellBar({ order, inventory, onCast }: {
   return (
     <View style={{ height: SPELL_BAR_HEIGHT, flexDirection: 'row', alignItems: 'center',
       justifyContent: 'center', gap: 10 }}>
+      {held.length === 0 && hint && (
+        <Text className="font-script text-sm text-ink-soft" numberOfLines={2}
+          style={{ textAlign: 'center', paddingHorizontal: 8 }}>{hint}</Text>
+      )}
       {held.map(type => {
         const count = counts.get(type) ?? 0;
         return (

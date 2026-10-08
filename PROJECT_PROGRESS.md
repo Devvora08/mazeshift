@@ -1,6 +1,37 @@
 # MazeShift — Project Progress
 
-Updated: 2026-10-06
+Updated: 2026-10-08
+
+## 2026-10-07/08 — smooth movement, block-confined monsters, tap-to-cast
+
+All items below were device-tested by the user in Expo Go (release mode) unless marked otherwise.
+
+- **Hero on a UI-thread engine** (`components/heroMotion.ts`, `b775475`). Level 20 showed repeated 200–800 ms JavaScript stalls (on-device PERF readout), and every hero step used to round-trip through JavaScript, so the wizard stuck in all directions. Input (D-pad gestures), wall checks, step chaining, facing, run/idle animation and camera now run in a Reanimated frame callback; the store is told afterwards (`commitStep`, `finishMove`, `setFacing`) and keeps all rules. Dash and Phase hand their steps to the engine via `lib/hero/driver.ts` (refund if rejected). The store's `move()` remains as the headless-test fallback. User verdict: "super super smooth" on level 20. Do not reintroduce JavaScript into the step path.
+- **Wall-motion planning** is hashed by wall key and endpoint instead of all-pairs sorting (6–9 ms → 1–2 ms per scramble on PC; runs on the UI thread).
+- **Monsters confined to their spawn block** (`3109a8a`). `LevelConfig.monstersCrossBlocks` (default off) is the switch; each monster has `homeBlockId`; pathing skips gateways, sensing and Stalker alerts stay in the home block, and a final guard rejects any step out of it. Roaming mode remains tested for future levels.
+- **Growls by block:** any monster in the hero's block can growl, regardless of distance.
+- **Hero visible immediately on level load** (`fcae838`): decoded sprite sheets are cached app-wide and preloaded at startup.
+- **Draw once, tap to cast** (`ba26c30`): spell bar above the controls section (D-pad keeps its original position), first-acquisition slot order, count badge only above one charge. Drawing a held spell's sigil away from a charm still casts it. Empty bar shows a collect/cast hint.
+- **Route glow:** static, semi-transparent purple glow on gateway openings leading toward the exit. *Not yet seen on a device.*
+- **Game music** now starts only after the track has loaded (it could be silently dropped on level start).
+- **Testing setup:** `EXPO_PUBLIC_UNLOCK_ALL=1 npx expo start --no-dev --minify` gives a release-speed preview with all levels unlocked, a "test build Bn" title marker, monster home-block dots, and a PERF readout with per-subsystem timings and on/off switches. Never set that variable in `eas.json` or `.env`. Expo Go caches release-mode bundles: clear Expo Go *data* before each check (a new port does not help). The installed closed-test app runs old code.
+- 38 gameplay/monster checks pass; TypeScript clean.
+
+**Remaining backlog:** home/opening screen (hero art, Audio / How to play / Levels, Continue); levels map redesign; game-like charms/monsters guide (no How to play screen exists yet); review of back/leave confirmation, stale progress writes and zero best-time records. Decided against: block centering and head-clipping changes (user: both look fine). Before a new closed-test upload, verify smoothness on a real release build.
+
+## 2026-10-06 — audio lifecycle fix and roughness review
+
+- Removed GameAudio and MenuAudio cleanup pause calls: hook-owned native players are released by Expo before these cleanup effects, making subsequent pause calls invalid.
+- Pending seek/replay completions are invalidated on unmount, player replacement, playback-state changes and retry. Replay failures are caught. GameAudio is memoized to skip unrelated parent HUD updates.
+- Movement, collision, simulation cadence and canvas rendering remain unchanged. Before this fix, those paths matched `12879c0`; the development level-access change only affected access guards.
+- Held movement chains via a UI-animation completion callback back to JavaScript. JavaScript stalls can delay the next cell; development overhead and repeated audio errors are plausible contributors, not a measured diagnosis of device roughness. Existing frame readout measures UI frames only. Exact correspondence with the Google Play artifact remains unverified.
+- TypeScript, whitespace checks, all 32 gameplay/monster groups, and mocked audio release/replay lifecycle checks pass. Native device verification remains pending; fully restart Expo Go and compare held movement with audio on/off before making further engine changes.
+
+## 2026-10-06 — local development level access
+
+- Local Expo development (`__DEV__`) now bypasses sequential and premium level locks in the home list and game-screen access checks, allowing all 20 levels for testing.
+- Release builds retain the existing progression and purchase requirements. The bypass does not write unlocks or premium ownership to storage; ordinary gameplay records still save normally.
+- Maze simulation, movement and rendering are unchanged. TypeScript and diff whitespace checks pass; device testing remains pending.
 
 This is a snapshot of the current source code and work completed so far. A feature listed in a level configuration is not necessarily implemented at runtime; those distinctions are recorded below.
 

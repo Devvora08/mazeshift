@@ -251,7 +251,10 @@ export default function GameScreen() {
           empty so nothing shifts as spells are collected and spent. */}
       {caughtBy || reachedExit
         ? <View style={{ height: SPELL_BAR_HEIGHT }} />
-        : <SpellBar order={spellOrder} inventory={inventory} onCast={handleSpellTap} />}
+        : <SpellBar order={spellOrder} inventory={inventory} onCast={handleSpellTap}
+            hint={level && level.utilities.length > 0
+              ? 'Stand on a charm and draw its symbol to collect it, then tap it here to cast'
+              : undefined} />}
       <View className="h-72 items-center">
         {caughtBy || reachedExit ? <View className="items-center pt-6">
           <Text className="font-hand text-3xl text-ink">{caughtBy ? 'The maze claimed you' : 'You made it out'}</Text>

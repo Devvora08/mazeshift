@@ -1,5 +1,5 @@
 import {
-  Atlas, Canvas, Circle, Group, Image, type SkImage, Skia, rect,
+  Atlas, BlurMask, Canvas, Circle, Group, Image, RoundedRect, type SkImage, Skia, rect,
 } from '@shopify/react-native-skia';
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, StyleSheet } from 'react-native';
@@ -127,6 +127,44 @@ const PickupMarker = memo(function PickupMarker({ x, y, cellSize, image, color, 
 });
 
 const HERO_ANIMATIONS = Object.keys(HERO_SHEETS) as HeroAnimationName[];
+
+const ROUTE_GLOW = '#a855f7';
+
+/** A static, soft purple glow over each gateway opening that leads toward the exit.
+ * Blocks form a chain b0 → b1 → … → exit, so "forward" means a higher block index.
+ * Lives on the walls canvas, which only redraws when walls change. */
+const RouteGlow = memo(function RouteGlow({ world, blockIds, cellSize }: {
+  world: MazeWorld; blockIds: ReadonlySet<string>; cellSize: number;
+}) {
+  const glows = useMemo(() => {
+    const index = new Map(world.blocks.map(b => [b.id, b.index]));
+    const out: { key: string; x: number; y: number; w: number; h: number }[] = [];
+    for (const block of world.blocks) {
+      if (!blockIds.has(block.id)) continue;
+      for (const g of world.gatewaysByBlock.get(block.id) ?? []) {
+        if ((index.get(g.toBlockId) ?? -1) <= block.index) continue;
+        const cx = block.worldOffsetX + g.fromCell.x, cy = block.worldOffsetY + g.fromCell.y;
+        const along = 0.9, across = 0.7;
+        // Centered on the cell side the opening passes through.
+        const [mx, my, horizontal] = g.direction === 'right' ? [cx + 1, cy + 0.5, false]
+          : g.direction === 'left' ? [cx, cy + 0.5, false]
+          : g.direction === 'down' ? [cx + 0.5, cy + 1, true] : [cx + 0.5, cy, true];
+        const w = (horizontal ? along : across) * cellSize, h = (horizontal ? across : along) * cellSize;
+        out.push({ key: `${block.id}:${g.fromCell.x},${g.fromCell.y}:${g.direction}`,
+          x: mx * cellSize - w / 2, y: my * cellSize - h / 2, w, h });
+      }
+    }
+    return out;
+  }, [world, blockIds, cellSize]);
+  return <>
+    {glows.map(g => (
+      <RoundedRect key={g.key} x={g.x} y={g.y} width={g.w} height={g.h} r={cellSize * 0.3}
+        color={ROUTE_GLOW} opacity={0.35}>
+        <BlurMask blur={cellSize * 0.2} style="normal" />
+      </RoundedRect>
+    ))}
+  </>;
+});
 
 /**
  * Keep every decoded sheet bound to its own frame geometry. Only the selected
@@ -287,6 +325,7 @@ export const WorldCanvas = memo(function WorldCanvas({
         now rebuild its paths without making sprite frames redraw that geometry. */}
     <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
       <Group transform={cameraTransform}>
+        <RouteGlow world={world} blockIds={nearbyBlockIds} cellSize={cellSize} />
         {world.blocks.filter(block => nearbyBlockIds.has(block.id)).map((block) => (
           <BlockWalls
             key={block.id}
