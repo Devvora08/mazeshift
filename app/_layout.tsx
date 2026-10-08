@@ -12,6 +12,7 @@ import {
 import { PatrickHand_400Regular } from '@expo-google-fonts/patrick-hand';
 import { useProgressStore } from '../store/progressStore';
 import { usePurchaseStore } from '../store/purchaseStore';
+import { preloadSpriteImages } from '../lib/sprites/imageCache';
 
 export default function RootLayout() {
   const hydrate = useProgressStore((state) => state.hydrate);
@@ -26,6 +27,7 @@ export default function RootLayout() {
     if (fontError) console.error(fontError);
   }, [fontError]);
 
+  useEffect(() => { preloadSpriteImages(); }, []);
   useEffect(() => { void hydrate(); }, [hydrate]);
   useEffect(() => {
     if (progressHydrated) void initializePurchases();

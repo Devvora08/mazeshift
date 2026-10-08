@@ -1,10 +1,11 @@
-import { Atlas, Circle, Skia, rect, useImage } from '@shopify/react-native-skia';
+import { Atlas, Circle, Skia, rect } from '@shopify/react-native-skia';
 import { memo, useEffect } from 'react';
 import { cancelAnimation, Easing, useDerivedValue, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSpriteLoop } from '../hooks/useSpriteLoop';
 import type { Monster, WorldCell } from '../lib/modules/monsters';
 import type { MazeWorld } from '../lib/maze/world';
 import { MONSTER_SHEETS } from '../lib/sprites/monsterFrames';
+import { useCachedImage } from '../lib/sprites/imageCache';
 import { useGameStore } from '../store/gameStore';
 
 const HEIGHT = { hunter: 1.8, wraith: 1.65, brute: 1.8, stalker: 1.8 };
@@ -54,10 +55,10 @@ export const MonsterSprite = memo(function MonsterSprite({ monster, world, cellS
   // Decode each direction once, but submit only the active sheet to Skia. Previously
   // four Atlas nodes were drawn per monster every frame, three at zero opacity.
   const sheets = MONSTER_SHEETS[monster.type];
-  const upImage = useImage(sheets.up.asset);
-  const downImage = useImage(sheets.down.asset);
-  const leftImage = useImage(sheets.left.asset);
-  const rightImage = useImage(sheets.right.asset);
+  const upImage = useCachedImage(sheets.up.asset);
+  const downImage = useCachedImage(sheets.down.asset);
+  const leftImage = useCachedImage(sheets.left.asset);
+  const rightImage = useCachedImage(sheets.right.asset);
   const image = { up: upImage, down: downImage, left: leftImage, right: rightImage }[monster.facing];
   const sheet = sheets[monster.facing];
   const frame = useSpriteLoop(sheet.frames.length,

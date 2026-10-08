@@ -1,5 +1,5 @@
 import {
-  Atlas, Canvas, Circle, Group, Image, type SkImage, Skia, rect, useImage,
+  Atlas, Canvas, Circle, Group, Image, type SkImage, Skia, rect,
 } from '@shopify/react-native-skia';
 import { memo, useEffect, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
@@ -19,6 +19,7 @@ import { MonsterLayer } from './MonsterLayer';
 import type { PlacedTrap } from '../lib/modules/utilities/effects';
 import { HERO_STEP_MS, useGameStore } from '../store/gameStore';
 import { HERO_SHEETS, type HeroAnimationName } from '../lib/sprites/heroFrames';
+import { useCachedImage } from '../lib/sprites/imageCache';
 import type { Direction, MazeWorld } from '../lib/maze/world';
 import type { Position } from '../lib/maze/types';
 import { SPELL_COLORS, SPELL_ICONS, type UtilityType } from '../lib/modules/utilities';
@@ -146,7 +147,7 @@ const HeroSprite = memo(function HeroSprite({ name, active, cellSize, worldX, wo
   worldY: SharedValue<number>;
 }) {
   const sheet = HERO_SHEETS[name];
-  const image = useImage(sheet.asset);
+  const image = useCachedImage(sheet.asset);
   // Eight drawings take the same cycle time as five, rather than slowing the gait.
   const fps = name === 'idle' ? IDLE_FPS : RUN_FPS * sheet.frames.length / 5;
   const frame = useSpriteLoop(sheet.frames.length, active && !paused ? fps : 0);
@@ -186,12 +187,12 @@ export const WorldCanvas = memo(function WorldCanvas({
   // Fixed set of hooks (one per spell, never conditional) so every icon is decoded once and
   // reused across however many pickups of that type appear in the world.
   const allowedSet = useMemo(() => new Set(allowedUtilities), [allowedUtilities]);
-  const phaseIcon = useImage(allowedSet.has('phase') ? SPELL_ICONS.phase : null);
-  const destroyIcon = useImage(allowedSet.has('destroy') ? SPELL_ICONS.destroy : null);
-  const scrambleIcon = useImage(allowedSet.has('scramble') ? SPELL_ICONS.scramble : null);
-  const dashIcon = useImage(allowedSet.has('dash') ? SPELL_ICONS.dash : null);
-  const shieldIcon = useImage(allowedSet.has('shield') ? SPELL_ICONS.shield : null);
-  const trapIcon = useImage(allowedSet.has('trap') ? SPELL_ICONS.trap : null);
+  const phaseIcon = useCachedImage(allowedSet.has('phase') ? SPELL_ICONS.phase : null);
+  const destroyIcon = useCachedImage(allowedSet.has('destroy') ? SPELL_ICONS.destroy : null);
+  const scrambleIcon = useCachedImage(allowedSet.has('scramble') ? SPELL_ICONS.scramble : null);
+  const dashIcon = useCachedImage(allowedSet.has('dash') ? SPELL_ICONS.dash : null);
+  const shieldIcon = useCachedImage(allowedSet.has('shield') ? SPELL_ICONS.shield : null);
+  const trapIcon = useCachedImage(allowedSet.has('trap') ? SPELL_ICONS.trap : null);
   const spellIcons: Record<UtilityType, SkImage | null> = {
     phase: phaseIcon, destroy: destroyIcon, scramble: scrambleIcon,
     dash: dashIcon, shield: shieldIcon, trap: trapIcon,
